@@ -37,8 +37,8 @@ pub fn test_renderer() -> DewRenderer {
     let fonts = FontSources::System;
     #[cfg(not(feature = "system-fonts"))]
     let fonts = FontSources::bundled(&[
-        include_bytes!("../../../../testing/fonts/Roboto-Regular.ttf"),
-        include_bytes!("../../../../testing/fonts/Roboto-Bold.ttf"),
+        include_bytes!("../../test-fonts/Roboto-Regular.ttf"),
+        include_bytes!("../../test-fonts/Roboto-Bold.ttf"),
     ]);
     DewRenderer::new(FrameSignals::new(Instant::now()), fonts)
 }
