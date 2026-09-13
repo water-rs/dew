@@ -31,10 +31,26 @@ jobs:
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         # `system-fonts` reaches the platform font service through fontconfig,
-        # whose headers the fontique backend needs to build.
+        # whose headers the fontique backend needs to build. `libegl-dev`
+        # carries egl.pc for khronos-egl (xcap -> waterkit-screen under
+        # --all-features); gbm/pipewire/xcb cover the rest of that screen-
+        # capture graph. The noto fonts are faces, not headers: system-fonts
+        # is a default feature, so the test leg enumerates real fonts and a
+        # runner without CJK and Latin faces shapes coverage tests to
+        # `.notdef`.
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig1-dev
+          sudo apt-get install -y libfontconfig1-dev libegl-dev libgbm-dev \
+            libpipewire-0.3-dev libxcb1-dev fonts-noto-core fonts-noto-cjk
+      - name: Install DirectX Shader Compiler
+        if: runner.os == 'Windows'
+        # shaderloom compiles the WGSL waterui-graphics ships to DXIL on
+        # Windows; the runner image does not ship dxc.
+        uses: tracel-ai/github-actions/install-dxc@295f2fdbae5271f4f8ad56d634e4ff6a95daafc8
+      - name: Verify DirectX Shader Compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: dxc --version
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       - if: runner.os == 'Linux'
