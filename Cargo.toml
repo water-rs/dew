@@ -1,12 +1,15 @@
+[workspace]
+resolver = "2"
+
 [package]
 name = "waterui-dew"
-version = "0.2.0"
-edition.workspace = true
+version = "0.2.1"
+edition = "2024"
 authors = ["Lexo Liu"]
-license.workspace = true
-rust-version.workspace = true
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
 readme = "README.md"
-repository = "https://github.com/water-rs/waterui"
+repository = "https://github.com/water-rs/dew"
 description = "Dew: WaterUI's embedded-first CPU rendering backend"
 keywords = ["ui", "backend", "waterui", "embedded", "gui"]
 categories = ["gui", "embedded"]
@@ -62,32 +65,31 @@ progress = ["dep:waterui"]
 
 [dependencies]
 accesskit = "0.25"
-waterui-core.workspace = true
-waterui-backend-core.workspace = true
-waterui-controls.workspace = true
-waterui-graphics = { workspace = true, features = ["cpu-scene"] }
-waterui-layout.workspace = true
+waterui-core = "0.3.1"
+waterui-backend-core = { version = "0.1.1", default-features = false }
+waterui-controls = "0.3.1"
+waterui-graphics = { version = "0.4.0", default-features = false, features = ["cpu-scene"] }
+waterui-layout = "0.3.1"
 # Navigation is `no_std` and pulls no renderer of its own, so it stays in the
 # lean firmware graph: a device with two screens needs a way between them.
-waterui-navigation.workspace = true
+waterui-navigation = "0.3.1"
 # Default features off: the shape crate's default is a wgpu-backed morph
 # renderer, and dew's graph is GPU-free by design.
-waterui-shape = { workspace = true, default-features = false }
+waterui-shape = { version = "0.1.1", default-features = false }
 # `font-collection` for the one `parley` collection this renderer shapes with
 # and installs into the environment. Not `system-fonts`: the faces come from
 # the board, and a firmware build has no system font source at all.
-waterui-text = { workspace = true, features = ["font-collection"] }
-nami.workspace = true
-# FrameWork and ChipBudget serialize into the performance report. The
-# workspace pins serde without default features, which suits a firmware graph.
-serde = { workspace = true, features = ["derive"] }
-parley = { workspace = true, features = ["libm"] }
-kurbo.workspace = true
-peniko.workspace = true
-skrifa.workspace = true
+waterui-text = { version = "0.4.0", features = ["font-collection"] }
+nami = "0.11.2"
+# FrameWork and ChipBudget serialize into the performance report.
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+parley = { version = "0.11", default-features = false, features = ["libm"] }
+kurbo = "0.13"
+peniko = "0.6"
+skrifa = "0.47.0"
 # Default features deliberately off: they include the PNG encoder, which
 # only the host-side snapshot surface needs — see the `host` feature.
-vello_cpu = { workspace = true, features = [
+vello_cpu = { version = "0.2.0", default-features = false, features = [
     "std",
     "text",
     "u8_pipeline",
@@ -95,17 +97,17 @@ vello_cpu = { workspace = true, features = [
 ] }
 winit = { version = "0.30", optional = true }
 softbuffer = { version = "0.4", optional = true }
-executor-core = { workspace = true, optional = true }
-native-executor = { workspace = true, optional = true }
+executor-core = { version = "0.7.1", features = ["std"], optional = true }
+native-executor = { version = "0.8.0", optional = true }
 async-executor = { version = "1", optional = true }
 log = { version = "0.4", optional = true }
-waterui = { version = "0.4.0", path = "../..", default-features = false, optional = true }
+waterui = { version = "0.4.0", default-features = false, optional = true }
 
 [target.'cfg(target_os = "espidf")'.dependencies]
 esp-idf-svc = { version = "0.52", optional = true }
 
 [dev-dependencies]
-waterui-testing = { path = "../../testing" }
+waterui-testing = "0.4.0"
 # The theme installation API (`Theme`, `ColorSettings`, `FontSettings`) and the
 # authoring prelude every test view tree is written in live in the facade
 # crate, and nothing below it exposes them. The library reaches the facade only
@@ -114,7 +116,7 @@ waterui-testing = { path = "../../testing" }
 # firmware shape's tests do not build at all. Tests are host-side and never
 # enter a flash image, so depending on the facade here costs the firmware graph
 # nothing.
-waterui = { path = "../..", default-features = false }
+waterui = { version = "0.4.0", default-features = false }
 # Scene content, for the tests that prove `Scene2D` drawings render on dew's
 # CPU rasterizer unchanged. Test-only on purpose: dew draws a scene through
 # the engine-neutral contract and never needs to know which component produced
@@ -122,23 +124,23 @@ waterui = { path = "../..", default-features = false }
 # `waterui-graphics` for its `gpu` feature (`CanvasImage` decodes through it),
 # which is why they are confined to dev-dependencies — the firmware graph,
 # built from the library alone, stays GPU-free.
-waterui-canvas.workspace = true
-waterui-svg.workspace = true
+waterui-canvas = "0.1.2"
+waterui-svg = "0.3.0"
 # A formula is the scene content that has something to say about itself: it
 # answers `SceneContent::accessibility_label` with itself spoken as a sentence,
 # which is what proves dew's scene leaf publishes a content-supplied name rather
 # than a bare unnamed image. Test-only for the same reason as the two crates
 # above.
-waterui-math.workspace = true
+waterui-math = "0.1.0"
 # The component issue #180 is actually about: an interactive chart wraps its
 # canvas in `Metadata<GestureObserver>` and `Metadata<OnEvent>`, and every one
 # of those wrappers used to abort dew's dispatch. Test-only, like the scene
 # crates above and for the same reason.
-waterui-chart.workspace = true
+waterui-chart = "0.2.0"
 # Tracks the version vello_cpu links, or `Level` is a different type on either side.
 fearless_simd = { version = "0.4", features = ["force_support_fallback"] }
-executor-core.workspace = true
-native-executor.workspace = true
+executor-core = { version = "0.7.1", features = ["std"] }
+native-executor = "0.8.0"
 # The performance simulation emits its report as serialized TOML rather than
 # hand-concatenated lines.
 toml = "1.1.5"
@@ -204,4 +206,31 @@ name = "watch_sim"
 required-features = ["embedded-simulator"]
 
 [lints]
-workspace = true
+rust.missing_docs = "warn"
+rust.missing_debug_implementations = "warn"
+clippy.all = "warn"
+clippy.style = "warn"
+clippy.correctness = "warn"
+clippy.complexity = "warn"
+clippy.suspicious = "warn"
+clippy.perf = "warn"
+clippy.pedantic = "warn"
+clippy.nursery = "warn"
+clippy.cargo = "warn"
+# Every `unsafe` must state why it is sound, in a form the compiler checks.
+clippy.undocumented_unsafe_blocks = "warn"
+clippy.multiple_crate_versions =  { level = "allow", priority = 1 }
+
+# The WaterUI packages above come from crates.io, so this repository builds
+# against the same released APIs its users get. The third-party pins below are
+# the framework's own: the published framework crates were built with these
+# forks, and dropping them here would run this repository's render tests
+# through different code than the framework runs.
+[patch.crates-io]
+xcb = { git = "https://github.com/rust-x-bindings/rust-xcb", rev = "ae3b2cd080e78173223038ccbebdc644eaf4a9ad" }
+block = { git = "https://github.com/Dicklesworthstone/rust-block", rev = "b39ae859d1ee8e8cb5eef6a516471f1578d26b96" }
+vello = { git = "https://github.com/lexoliu/vello", rev = "5e5f538556be16527f67379b105af82f408b747d" }
+vello_hybrid = { git = "https://github.com/lexoliu/vello", rev = "d68d9e9825bcd1ffee762323881c13a2e7a3f639" }
+vello_common = { git = "https://github.com/lexoliu/vello", rev = "d68d9e9825bcd1ffee762323881c13a2e7a3f639" }
+vello_sparse_shaders = { git = "https://github.com/lexoliu/vello", rev = "d68d9e9825bcd1ffee762323881c13a2e7a3f639" }
+glifo = { git = "https://github.com/lexoliu/vello", rev = "d68d9e9825bcd1ffee762323881c13a2e7a3f639" }

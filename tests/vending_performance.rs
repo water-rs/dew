@@ -59,7 +59,7 @@ const INTERACTION_PERIOD: usize = 120;
 /// instead, exactly the way firmware bundles its face: system enumeration
 /// stays off, and every platform shapes the same glyphs from the same tables.
 fn load_simulation_font() -> Vec<u8> {
-    include_bytes!("../../../testing/fonts/Roboto-Regular.ttf").to_vec()
+    include_bytes!("../test-fonts/Roboto-Regular.ttf").to_vec()
 }
 
 /// Steady-state heap retention tolerated, in bytes per sampled frame.
