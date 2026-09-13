@@ -34,14 +34,16 @@ jobs:
         # whose headers the fontique backend needs to build. `libegl-dev`
         # carries egl.pc for khronos-egl (xcap -> waterkit-screen under
         # --all-features); gbm/pipewire/xcb cover the rest of that screen-
-        # capture graph. The noto fonts are faces, not headers: system-fonts
-        # is a default feature, so the test leg enumerates real fonts and a
-        # runner without CJK and Latin faces shapes coverage tests to
-        # `.notdef`.
+        # capture graph, and `libva-dev` is the pkg-config name cros-libva
+        # (waterkit-codec -> waterui-image -> waterui-media) probes for. The
+        # noto fonts are faces, not headers: system-fonts is a default
+        # feature, so the test leg enumerates real fonts and a runner without
+        # CJK and Latin faces shapes coverage tests to `.notdef`.
         run: |
           sudo apt-get update
           sudo apt-get install -y libfontconfig1-dev libegl-dev libgbm-dev \
-            libpipewire-0.3-dev libxcb1-dev fonts-noto-core fonts-noto-cjk
+            libpipewire-0.3-dev libva-dev libxcb1-dev \
+            fonts-noto-core fonts-noto-cjk
       - name: Install DirectX Shader Compiler
         if: runner.os == 'Windows'
         # shaderloom compiles the WGSL waterui-graphics ships to DXIL on
