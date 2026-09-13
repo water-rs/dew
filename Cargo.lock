@@ -10385,13 +10385,3 @@ dependencies = [
  "syn 3.0.5",
  "winnow",
 ]
-
-[[patch.unused]]
-name = "block"
-version = "0.1.6"
-source = "git+https://github.com/Dicklesworthstone/rust-block?rev=b39ae859d1ee8e8cb5eef6a516471f1578d26b96#b39ae859d1ee8e8cb5eef6a516471f1578d26b96"
-
-[[patch.unused]]
-name = "waterui-text"
-version = "0.4.0"
-source = "git+https://github.com/water-rs/waterui?rev=99d515cdc8dae1ff908f3d658ac5d7f6587415f5#99d515cdc8dae1ff908f3d658ac5d7f6587415f5"
