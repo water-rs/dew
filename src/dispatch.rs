@@ -29,7 +29,8 @@ use waterui_core::dynamic::Dynamic;
 use waterui_core::event::OnEvent;
 use waterui_core::gesture::GestureObserver;
 use waterui_core::layout::{
-    ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubView, ViewDimensions,
+    LayoutPriority, ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubView, SubviewPlacement,
+    ViewDimensions, measure_layout,
 };
 use waterui_core::views::Views;
 use waterui_core::{
@@ -40,7 +41,7 @@ use waterui_graphics::{SceneView, SceneViewMergeToParent};
 use waterui_layout::Divider;
 use waterui_layout::container::{FixedContainer, LazyContainer};
 use waterui_layout::scroll::ScrollView;
-use waterui_layout::spacer::Spacer;
+use waterui_layout::spacer::{Spacer, SpacerLayout};
 use waterui_navigation::{NavigationSplitLayout, NavigationStack, NavigationView, TabsLayout};
 use waterui_shape::{ClipShape, ResolvedShape};
 use waterui_text::{TextConfig, styled::StyledStr};
@@ -65,45 +66,73 @@ const MAX_BODY_DEPTH: usize = 64;
 #[cfg(not(feature = "gestures"))]
 const INTERACTION_FEATURE_REQUIRED: &str = "dew: interaction metadata (`GestureObserver` / `OnEvent`) needs the `waterui-dew/gestures` feature, which this build does not enable";
 
-/// Where a view draws: the accumulated transform and its local bounds.
+/// Where a view draws: the accumulated transform, its local bounds, and the
+/// proposal layout selected for it.
+///
+/// Equal bounds can carry different answers to "how much space is on offer" —
+/// an unspecified axis and a bounded one produce the same rectangle for a
+/// flexible child while asking different things of whatever it places next —
+/// so the offer travels with the placement instead of being reconstructed
+/// from the bounds.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderContext {
     /// Local-to-window transform for this view.
     pub transform: Affine,
     /// Bounds in local coordinates (origin is this view's top-left).
     pub bounds: Rect,
+    /// The proposal this view was laid out under.
+    pub proposal: ProposalSize,
 }
 
 impl RenderContext {
     /// The root context covering a `width` × `height` window.
+    ///
+    /// The window is the one region a renderer owns outright, so the root is
+    /// also where the bounded offer enters the tree: every proposal below
+    /// descends from this one.
     #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "logical-pixel geometry is far below f32 precision limits"
+    )]
     pub const fn root(width: f64, height: f64) -> Self {
         Self {
             transform: Affine::IDENTITY,
             bounds: Rect::new(0.0, 0.0, width, height),
+            proposal: ProposalSize {
+                width: Some(width as f32),
+                height: Some(height as f32),
+            },
         }
     }
 
-    /// A child context placed at `frame` inside this context.
+    /// A child context for `placement` inside this context.
     ///
-    /// This is the layout path: `frame` is what a measurement pass produced, in
-    /// `f32`, and the child gets its own origin. Chrome that already knows the
-    /// exact region a child must cover uses [`Self::child_in`] instead.
+    /// This is the layout path: `place` answers both the frame the child is
+    /// drawn into — `f32`, converted here with the child getting its own
+    /// origin — and the proposal the child was selected under, which the
+    /// child forwards to whatever it places next. Chrome that already knows
+    /// the exact region a child must cover uses [`Self::child_in`] instead.
     #[must_use]
-    pub fn child(self, frame: LayoutRect) -> Self {
+    pub fn child(self, placement: SubviewPlacement) -> Self {
         Self {
             transform: self.transform
-                * Affine::translate((f64::from(frame.x()), f64::from(frame.y()))),
+                * Affine::translate((
+                    f64::from(placement.frame.x()),
+                    f64::from(placement.frame.y()),
+                )),
             bounds: Rect::new(
                 0.0,
                 0.0,
-                f64::from(frame.width()),
-                f64::from(frame.height()),
+                f64::from(placement.frame.width()),
+                f64::from(placement.frame.height()),
             ),
+            proposal: placement.proposal,
         }
     }
 
-    /// A child context covering `rect` of this context, at `f64` throughout.
+    /// A child context covering `rect` of this context under `proposal`, at
+    /// `f64` throughout.
     ///
     /// A child is placed by its origin and its extent, so the far edge it
     /// reaches is the two added back together and the extent has to be exact
@@ -115,11 +144,16 @@ impl RenderContext {
     /// twenty-odd bits to spare, which is why chrome that carves its window
     /// into regions hands them over here rather than rounding them through
     /// [`Self::child`].
+    ///
+    /// The caller names the proposal itself: the offer the child was measured
+    /// under, or — for a region chrome owns outright without measuring — a
+    /// bounded offer naming the region's extent (see [`bounded_offer`]).
     #[must_use]
-    pub fn child_in(self, rect: Rect) -> Self {
+    pub fn child_in(self, rect: Rect, proposal: ProposalSize) -> Self {
         Self {
             transform: self.transform * Affine::translate((rect.x0, rect.y0)),
             bounds: Rect::new(0.0, 0.0, rect.width(), rect.height()),
+            proposal,
         }
     }
 
@@ -139,9 +173,31 @@ pub(crate) trait DewNode {
         StretchAxis::None
     }
 
+    /// How strongly this node holds on to space when its container runs
+    /// short, forwarded through to [`SubView::priority`]. `0` unless the node
+    /// is a dedicated priority carrier such as [`PriorityNode`] or
+    /// [`SpacerNode`]; transparent wrappers delegate to their child.
+    fn priority(&self) -> i32 {
+        0
+    }
+
     fn patch(&mut self, _renderer: &mut DewRenderer) -> bool {
         false
     }
+}
+
+/// The offer a chrome-owned region makes: exactly its own extent.
+///
+/// Regions chrome carves its window into — a navigation destination's page, a
+/// tab's content area, a split column — are assigned, not negotiated: the
+/// child was never measured, so a bounded proposal naming the region is the
+/// only honest offer.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "logical-pixel geometry is far below f32 precision limits"
+)]
+pub(crate) fn bounded_offer(rect: Rect) -> ProposalSize {
+    ProposalSize::new(Some(rect.width() as f32), Some(rect.height() as f32))
 }
 
 /// A node paired with a per-frame cache of its measurement results.
@@ -162,9 +218,8 @@ pub(crate) trait DewNode {
 ///
 /// This is also where `AGENTS.md` places the cache — measurement caching is
 /// the `SubView`'s responsibility, never the `Layout`'s. Dew confines
-/// measurement to the render thread ([`NodeSubview`] returns `true` from
-/// `require_main_thread`), so a plain [`RefCell`] suffices and no
-/// synchronization is needed.
+/// measurement to the render thread through [`MainThreadBound`], so a plain
+/// [`RefCell`] suffices and no synchronization is needed.
 struct MeasuredNode {
     inner: Box<dyn DewNode>,
     cache: RefCell<Vec<(ProposalSize, ViewDimensions)>>,
@@ -203,6 +258,10 @@ impl DewNode for MeasuredNode {
 
     fn stretch_axis(&self) -> StretchAxis {
         self.inner.stretch_axis()
+    }
+
+    fn priority(&self) -> i32 {
+        self.inner.priority()
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
@@ -604,6 +663,15 @@ fn build_unmeasured_node(
             child: build_node(renderer, content, env, depth + 1),
         });
     }
+    if type_id == TypeId::of::<Metadata<LayoutPriority>>() {
+        let Metadata { content, value } = *view
+            .downcast::<Metadata<LayoutPriority>>()
+            .expect("dew layout-priority downcast must match its type id");
+        return Box::new(PriorityNode {
+            priority: value.get(),
+            child: build_node(renderer, content, env, depth + 1),
+        });
+    }
     // Accessibility naming metadata (`.a11y_label()` / `.a11y_id()`) reaches the
     // dispatcher as an ignorable wrapper whose `body` is its content, so falling
     // through to the generic expansion below would render the content correctly
@@ -762,8 +830,8 @@ fn build_unmeasured_node(
         let spacer = *view
             .downcast::<Native<Spacer>>()
             .expect("dew Spacer downcast must match its type id");
-        return Box::new(EmptyNode {
-            stretch: spacer.stretch_axis(),
+        return Box::new(SpacerNode {
+            layout: SpacerLayout::from(spacer.into_inner()),
         });
     }
     if type_id == TypeId::of::<Native<()>>() {
@@ -842,7 +910,7 @@ impl SubView for NodeSubview<'_> {
     }
 
     fn priority(&self) -> i32 {
-        0
+        self.node.priority()
     }
 }
 
@@ -879,11 +947,15 @@ impl DewNode for ContainerNode {
             .iter()
             .map(|subview| subview as &dyn SubView)
             .collect::<Vec<_>>();
-        ViewDimensions::new(self.layout.size_that_fits(proposal, &refs))
+        // `measure_layout`, not `size_that_fits` alone: explicit alignment
+        // guides are resolved from each child's measurement under the
+        // proposal `place` selected for it, and a size-only answer would drop
+        // them.
+        measure_layout(self.layout.as_ref(), proposal, &refs)
     }
 
     fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
-        let frames = {
+        let placements = {
             let subviews = self
                 .children
                 .iter()
@@ -899,10 +971,15 @@ impl DewNode for ContainerNode {
             // here would shrink a row of cross-stretching children — a row of
             // colours, say — to zero height and draw nothing. Distributing the
             // assigned box among the children is exactly what `place` is for.
-            self.layout.place(placement_rect(ctx.bounds), &refs)
+            //
+            // Each placement carries the proposal the layout selected for that
+            // child — equal bounds under different proposals place children
+            // differently, so the offer travels with the frame.
+            self.layout
+                .place(placement_rect(ctx.bounds), ctx.proposal, &refs)
         };
-        for (child, frame) in self.children.iter_mut().zip(frames) {
-            child.render(renderer, ctx.child(frame));
+        for (child, placement) in self.children.iter_mut().zip(placements) {
+            child.render(renderer, ctx.child(placement));
         }
     }
 
@@ -975,6 +1052,10 @@ impl DewNode for NamingNode {
         self.child.stretch_axis()
     }
 
+    fn priority(&self) -> i32 {
+        self.child.priority()
+    }
+
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
         self.child.patch(renderer)
     }
@@ -996,6 +1077,43 @@ impl DewNode for RetainNode {
 
     fn stretch_axis(&self) -> StretchAxis {
         self.child.stretch_axis()
+    }
+
+    fn priority(&self) -> i32 {
+        self.child.priority()
+    }
+
+    fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
+        self.child.patch(renderer)
+    }
+}
+
+/// The retained node behind `.layout_priority(..)`.
+///
+/// Layout-transparent like [`RetainNode`] — it measures, renders, stretches
+/// and patches as its child — except the value it carries is the child's
+/// answer to [`SubView::priority`], which is what lets a stack squeeze every
+/// sibling below this band before it touches this child.
+struct PriorityNode {
+    priority: i32,
+    child: Box<dyn DewNode>,
+}
+
+impl DewNode for PriorityNode {
+    fn measure(&self, state: &RefCell<DewState>, proposal: ProposalSize) -> ViewDimensions {
+        self.child.measure(state, proposal)
+    }
+
+    fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
+        self.child.render(renderer, ctx);
+    }
+
+    fn stretch_axis(&self) -> StretchAxis {
+        self.child.stretch_axis()
+    }
+
+    fn priority(&self) -> i32 {
+        self.priority
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
@@ -1050,6 +1168,10 @@ impl DewNode for DynamicNode {
 
     fn stretch_axis(&self) -> StretchAxis {
         self.child.stretch_axis()
+    }
+
+    fn priority(&self) -> i32 {
+        self.child.priority()
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
@@ -1164,10 +1286,12 @@ impl DewNode for TextNode {
     fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
         // Scoped, exactly as `measure` reads it: a subtree that installs its
         // own foreground has to be painted in it, and a render that disagreed
-        // with the measurement would re-shape the text a second time.
+        // with the measurement would re-shape the text a second time. The
+        // width offer is the one layout selected — the bounds may be equal
+        // under a different proposal, and the text wraps to the offer.
         let foreground = theme::foreground(&self.env);
         let revision = self.revision();
-        let max_width = max_width_from_bounds(ctx.bounds);
+        let max_width = ctx.proposal.width;
         let transform = ctx.transform * Affine::translate((ctx.bounds.x0, ctx.bounds.y0));
         let outcome = self.cache.borrow_mut().emit(
             revision,
@@ -1234,7 +1358,7 @@ impl DewNode for StrNode {
 
     fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
         let foreground = theme::foreground(&self.env);
-        let max_width = max_width_from_bounds(ctx.bounds);
+        let max_width = ctx.proposal.width;
         let transform = ctx.transform * Affine::translate((ctx.bounds.x0, ctx.bounds.y0));
         let outcome = self.cache.borrow_mut().emit(
             TextRevision::font_only(self.fonts.revision()),
@@ -1337,6 +1461,33 @@ impl DewNode for EmptyNode {
     }
 }
 
+/// The retained node behind a native [`Spacer`].
+///
+/// The spacer's own [`SpacerLayout`] answers its measurement — the minimum
+/// length is the intrinsic size on both axes — and the container is what
+/// stretches it along the main axis. The node's only contribution beyond that
+/// is [`Spacer::DEFAULT_LAYOUT_PRIORITY`]: a stack squeezes the gap before it
+/// squeezes any ordinary content.
+struct SpacerNode {
+    layout: SpacerLayout,
+}
+
+impl DewNode for SpacerNode {
+    fn measure(&self, _state: &RefCell<DewState>, proposal: ProposalSize) -> ViewDimensions {
+        measure_layout(&self.layout, proposal, &[])
+    }
+
+    fn render(&mut self, _renderer: &mut DewRenderer, _ctx: RenderContext) {}
+
+    fn stretch_axis(&self) -> StretchAxis {
+        StretchAxis::MainAxis
+    }
+
+    fn priority(&self) -> i32 {
+        Spacer::DEFAULT_LAYOUT_PRIORITY
+    }
+}
+
 /// The box a container distributes among its children: the one its parent
 /// placed it in.
 #[expect(
@@ -1347,17 +1498,11 @@ const fn placement_rect(bounds: Rect) -> LayoutRect {
     LayoutRect::from_size(Size::new(bounds.width() as f32, bounds.height() as f32))
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "logical-pixel geometry is far below f32 precision limits"
-)]
-fn max_width_from_bounds(bounds: Rect) -> Option<f32> {
-    (bounds.width() > 0.0).then(|| bounds.width() as f32)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod layout_contract;
 
     /// A child reaches the far edge of the region it was given.
     ///
@@ -1382,7 +1527,7 @@ mod tests {
         );
 
         let painted = RenderContext::root(320.0, 480.0)
-            .child_in(Rect::new(NEAR, NEAR, FAR, FAR))
+            .child_in(Rect::new(NEAR, NEAR, FAR, FAR), ProposalSize::UNSPECIFIED)
             .window_bounds();
         assert_eq!(painted.x0.to_bits(), NEAR.to_bits());
         assert_eq!(painted.y0.to_bits(), NEAR.to_bits());

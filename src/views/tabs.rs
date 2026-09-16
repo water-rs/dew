@@ -31,7 +31,7 @@ use waterui_core::env::Store;
 use waterui_core::handler::AnyViewBuilder;
 use waterui_core::id::Id;
 use waterui_core::layout::{
-    Point, ProposalSize, Rect as LayoutRect, Size, StretchAxis, ViewDimensions,
+    Point, ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubviewPlacement, ViewDimensions,
 };
 use waterui_core::{AnyView, Environment};
 use waterui_graphics::color::{AccentColor, ForegroundColor, MutedForegroundColor, ResolvedColor};
@@ -41,7 +41,7 @@ use waterui_text::Text;
 use waterui_text::styled::StyledStr;
 
 use crate::accessibility::ActionTarget;
-use crate::dispatch::{DewNode, DewRenderer, RenderContext, WatchedSignal};
+use crate::dispatch::{DewNode, DewRenderer, RenderContext, WatchedSignal, bounded_offer};
 use crate::pointer::{PointerHandler, PointerTargetHandle};
 use crate::text::DewState;
 use crate::theme;
@@ -158,6 +158,8 @@ fn build_item(
         content,
         badge,
         enabled,
+        // Search-role presentation is an Apple tab-bar convention.
+        ..
     } = tab;
     let semantic_label = label
         .downcast_ref::<Label>()
@@ -302,6 +304,8 @@ impl TabItem {
         let window_bounds = ctx.transform.transform_rect_bbox(slot);
         self.register_accessibility(renderer, window_bounds, selected);
         renderer.push_accessibility_suppression();
+        // Every part was measured unspecified (`TabItem::layout`), and the
+        // placement carries that same offer.
         let mut y = slot.y0 + (slot.height() - layout.height).max(0.0) / 2.0;
         if let Some(icon) = self.icon.as_mut() {
             let width = f64::from(layout.icon.width).min(slot.width());
@@ -309,9 +313,12 @@ impl TabItem {
             let x = slot.x0 + (slot.width() - width) / 2.0;
             icon.render(
                 renderer,
-                ctx.child(LayoutRect::new(
-                    Point::new(to_f32(x), to_f32(y)),
-                    Size::new(to_f32(width), to_f32(height)),
+                ctx.child(SubviewPlacement::new(
+                    LayoutRect::new(
+                        Point::new(to_f32(x), to_f32(y)),
+                        Size::new(to_f32(width), to_f32(height)),
+                    ),
+                    ProposalSize::UNSPECIFIED,
                 )),
             );
             y += height + ICON_SPACING;
@@ -332,9 +339,12 @@ impl TabItem {
         let title_height = f64::from(layout.title.height).min((slot.y1 - y).max(0.0));
         self.title.render(
             renderer,
-            ctx.child(LayoutRect::new(
-                Point::new(to_f32(x), to_f32(y)),
-                Size::new(to_f32(title_width), to_f32(title_height)),
+            ctx.child(SubviewPlacement::new(
+                LayoutRect::new(
+                    Point::new(to_f32(x), to_f32(y)),
+                    Size::new(to_f32(title_width), to_f32(title_height)),
+                ),
+                ProposalSize::UNSPECIFIED,
             )),
         );
         x += title_width + BADGE_SPACING;
@@ -345,9 +355,12 @@ impl TabItem {
             let height = f64::from(layout.badge.height).min((slot.y1 - y).max(0.0));
             badge.render(
                 renderer,
-                ctx.child(LayoutRect::new(
-                    Point::new(to_f32(x), to_f32(y)),
-                    Size::new(to_f32(width), to_f32(height)),
+                ctx.child(SubviewPlacement::new(
+                    LayoutRect::new(
+                        Point::new(to_f32(x), to_f32(y)),
+                        Size::new(to_f32(width), to_f32(height)),
+                    ),
+                    ProposalSize::UNSPECIFIED,
                 )),
             );
         }
@@ -377,9 +390,12 @@ impl TabItem {
             let height = f64::from(layout.icon.height).min(slot.height());
             icon.render(
                 renderer,
-                ctx.child(LayoutRect::new(
-                    Point::new(to_f32(x), to_f32(y)),
-                    Size::new(to_f32(width), to_f32(height)),
+                ctx.child(SubviewPlacement::new(
+                    LayoutRect::new(
+                        Point::new(to_f32(x), to_f32(y)),
+                        Size::new(to_f32(width), to_f32(height)),
+                    ),
+                    ProposalSize::UNSPECIFIED,
                 )),
             );
             x += width + ICON_SPACING;
@@ -394,9 +410,12 @@ impl TabItem {
         let title_height = f64::from(layout.title.height).min(slot.height());
         self.title.render(
             renderer,
-            ctx.child(LayoutRect::new(
-                Point::new(to_f32(x), to_f32(y)),
-                Size::new(to_f32(title_width), to_f32(title_height)),
+            ctx.child(SubviewPlacement::new(
+                LayoutRect::new(
+                    Point::new(to_f32(x), to_f32(y)),
+                    Size::new(to_f32(title_width), to_f32(title_height)),
+                ),
+                ProposalSize::UNSPECIFIED,
             )),
         );
         x += title_width + BADGE_SPACING;
@@ -407,9 +426,12 @@ impl TabItem {
             let height = f64::from(layout.badge.height).min(slot.height());
             badge.render(
                 renderer,
-                ctx.child(LayoutRect::new(
-                    Point::new(to_f32(x), to_f32(y)),
-                    Size::new(to_f32(width), to_f32(height)),
+                ctx.child(SubviewPlacement::new(
+                    LayoutRect::new(
+                        Point::new(to_f32(x), to_f32(y)),
+                        Size::new(to_f32(width), to_f32(height)),
+                    ),
+                    ProposalSize::UNSPECIFIED,
                 )),
             );
         }
@@ -478,7 +500,7 @@ impl TabsNode {
         let Page::Open(page) = &mut self.items[selected].page else {
             panic!("the selected dew tab must be opened during the patch phase")
         };
-        page.render(renderer, ctx.child_in(bounds));
+        page.render(renderer, ctx.child_in(bounds, bounded_offer(bounds)));
     }
 
     fn render_tab_bar(

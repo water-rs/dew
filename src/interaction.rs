@@ -268,6 +268,10 @@ impl DewNode for GestureNode {
         self.child.stretch_axis()
     }
 
+    fn priority(&self) -> i32 {
+        self.child.priority()
+    }
+
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
         self.child.patch(renderer)
     }
@@ -291,6 +295,10 @@ impl DewNode for HoverNode {
 
     fn stretch_axis(&self) -> StretchAxis {
         self.child.stretch_axis()
+    }
+
+    fn priority(&self) -> i32 {
+        self.child.priority()
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {

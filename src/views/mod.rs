@@ -170,7 +170,11 @@ impl LabelText {
         if self.is_hidden() {
             return;
         }
-        let max_width = (rect.width() > 0.0).then(|| to_f32(rect.width()));
+        // The offer `measure` shapes under is `None` — intrinsic, never
+        // wrapped — so the same offer applies here. Keying the layout by the
+        // rect's width instead would shape a second, disagreeing layout for
+        // every width the chrome happens to park the label in.
+        let max_width = None;
         let key = TextLayoutKey { max_width, brush };
         let revision = self.revision();
         let mut cache = self.cache.borrow_mut();

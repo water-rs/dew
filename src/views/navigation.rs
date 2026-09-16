@@ -60,7 +60,7 @@ use waterui_controls::button::{ButtonStyle, button};
 use waterui_controls::text_field::TextField;
 use waterui_core::id::Id;
 use waterui_core::layout::{
-    Point, ProposalSize, Rect as LayoutRect, Size, StretchAxis, ViewDimensions,
+    Point, ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubviewPlacement, ViewDimensions,
 };
 use waterui_core::{AnyView, Environment, Metadata};
 use waterui_graphics::color::ResolvedColor;
@@ -73,7 +73,9 @@ use waterui_navigation::{
 };
 use waterui_text::Text;
 
-use crate::dispatch::{DewNode, DewRenderer, RenderContext, WatchedSignal, build_node};
+use crate::dispatch::{
+    DewNode, DewRenderer, RenderContext, WatchedSignal, bounded_offer, build_node,
+};
 use crate::text::DewState;
 use crate::views::to_f32;
 
@@ -355,17 +357,27 @@ impl Chrome {
             bar_rect.x1,
             bar_rect.y0 + layout.row_height,
         );
+        // Bar items are measured unspecified (`Chrome::layout`), and the
+        // placement has to carry that same offer: a child rendered under a
+        // bounded proposal would re-shape or re-size against the slot it was
+        // only centred in.
         let mut leading_edge = row.x0 + BAR_PADDING_X;
         if let (Some(node), Some(size)) =
             (self.contextual_leading.as_mut(), layout.contextual_leading)
         {
             let frame = centered_in(row, leading_edge, size);
-            node.render(renderer, ctx.child(frame));
+            node.render(
+                renderer,
+                ctx.child(SubviewPlacement::new(frame, ProposalSize::UNSPECIFIED)),
+            );
             leading_edge += f64::from(size.width) + BAR_SPACING;
         }
         for (node, size) in self.leading.iter_mut().zip(&layout.leading) {
             let frame = centered_in(row, leading_edge, *size);
-            node.render(renderer, ctx.child(frame));
+            node.render(
+                renderer,
+                ctx.child(SubviewPlacement::new(frame, ProposalSize::UNSPECIFIED)),
+            );
             leading_edge += f64::from(size.width) + BAR_SPACING;
         }
         let mut trailing_edge = row.x1 - BAR_PADDING_X;
@@ -377,7 +389,10 @@ impl Chrome {
         {
             let x = trailing_edge - f64::from(size.width);
             let frame = centered_in(row, x, *size);
-            node.render(renderer, ctx.child(frame));
+            node.render(
+                renderer,
+                ctx.child(SubviewPlacement::new(frame, ProposalSize::UNSPECIFIED)),
+            );
             trailing_edge = x - BAR_SPACING;
         }
 
@@ -419,24 +434,40 @@ impl Chrome {
             };
             node.render(
                 renderer,
-                ctx.child(LayoutRect::new(
-                    Point::new(to_f32(x), to_f32(title_y)),
-                    Size::new(to_f32(width), size.height),
+                ctx.child(SubviewPlacement::new(
+                    LayoutRect::new(
+                        Point::new(to_f32(x), to_f32(title_y)),
+                        Size::new(to_f32(width), size.height),
+                    ),
+                    ProposalSize::UNSPECIFIED,
                 )),
             );
             title_y += f64::from(size.height);
         }
 
-        if let (Some(field), Some(size)) = (self.search.as_mut(), layout.search) {
+        self.render_search(renderer, ctx, bar_rect, layout.search);
+    }
+
+    fn render_search(
+        &mut self,
+        renderer: &mut DewRenderer,
+        ctx: RenderContext,
+        bar_rect: Rect,
+        search_size: Option<Size>,
+    ) {
+        if let (Some(field), Some(size)) = (self.search.as_mut(), search_size) {
             let y = bar_rect.y1 - HAIRLINE - BAR_PADDING_Y - f64::from(size.height);
+            let width = to_f32(BAR_PADDING_X.mul_add(-2.0, bar_rect.width()).max(0.0));
             field.render(
                 renderer,
-                ctx.child(LayoutRect::new(
-                    Point::new(to_f32(bar_rect.x0 + BAR_PADDING_X), to_f32(y)),
-                    Size::new(
-                        to_f32(BAR_PADDING_X.mul_add(-2.0, bar_rect.width()).max(0.0)),
-                        size.height,
+                // The same offer `Chrome::layout` measured the field under:
+                // the bar's padded width, its height free.
+                ctx.child(SubviewPlacement::new(
+                    LayoutRect::new(
+                        Point::new(to_f32(bar_rect.x0 + BAR_PADDING_X), to_f32(y)),
+                        Size::new(width, size.height),
                     ),
+                    ProposalSize::new(Some(width), None),
                 )),
             );
         }
@@ -483,7 +514,10 @@ impl Chrome {
         let row = Rect::new(rect.x0 + HAIRLINE, rect.y0 + HAIRLINE, rect.x1, rect.y1);
         for (node, size) in self.bottom.iter_mut().zip(sizes) {
             let frame = centered_in(row, x, *size);
-            node.render(renderer, ctx.child(frame));
+            node.render(
+                renderer,
+                ctx.child(SubviewPlacement::new(frame, ProposalSize::UNSPECIFIED)),
+            );
             x += f64::from(size.width) + BAR_SPACING;
         }
     }
@@ -751,7 +785,9 @@ fn render_destination(
         entry.chrome.render_bottom(renderer, ctx, rect, sizes);
     }
     let content = Rect::new(bounds.x0, top_seam, bounds.x1, bottom_seam.max(top_seam));
-    entry.content.render(renderer, ctx.child_in(content));
+    entry
+        .content
+        .render(renderer, ctx.child_in(content, bounded_offer(content)));
     if renderer.accessibility_enabled() {
         renderer.pop_accessibility_parent();
     }
@@ -1126,11 +1162,14 @@ fn render_split_destination(
         render_destination(
             Some(entry),
             renderer,
-            ctx.child_in(frame.bounds),
+            ctx.child_in(frame.bounds, bounded_offer(frame.bounds)),
             frame.show_back,
         );
     } else {
-        placeholder.render(renderer, ctx.child_in(frame.bounds));
+        placeholder.render(
+            renderer,
+            ctx.child_in(frame.bounds, bounded_offer(frame.bounds)),
+        );
     }
 }
 
@@ -1157,7 +1196,8 @@ impl DewNode for SplitNode {
 
         let mut dividers = Vec::new();
         if let Some(bounds) = presentation.primary {
-            self.primary.render(renderer, ctx.child_in(bounds));
+            self.primary
+                .render(renderer, ctx.child_in(bounds, bounded_offer(bounds)));
             if bounds.x1 < ctx.bounds.x1 {
                 dividers.push(bounds.x1);
             }

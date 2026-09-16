@@ -34,6 +34,7 @@ pub fn shape_path(kind: ShapeKind, commands: &[PathCommand], bounds: Rect) -> Be
 
     let shorter = bounds.width().min(bounds.height()).max(0.0);
     let scaled = |radius: f32| f64::from(radius.clamp(0.0, 0.5)) * shorter;
+    let fixed = |radius: f32| f64::from(radius.max(0.0)).min(shorter / 2.0);
     match kind {
         ShapeKind::Rect => bounds.to_path(BEZIER_TOLERANCE),
         // A circle is inscribed in the bounds: centred, its diameter the
@@ -62,6 +63,24 @@ pub fn shape_path(kind: ShapeKind, commands: &[PathCommand], bounds: Rect) -> Be
         ShapeKind::Capsule => {
             RoundedRect::from_rect(bounds, shorter / 2.0).to_path(BEZIER_TOLERANCE)
         }
+        ShapeKind::FixedRoundedRect { corner_radius } => {
+            RoundedRect::from_rect(bounds, fixed(corner_radius)).to_path(BEZIER_TOLERANCE)
+        }
+        ShapeKind::FixedUnevenRoundedRect {
+            top_left,
+            top_right,
+            bottom_left,
+            bottom_right,
+        } => RoundedRect::from_rect(
+            bounds,
+            RoundedRectRadii::new(
+                fixed(top_left),
+                fixed(top_right),
+                fixed(bottom_right),
+                fixed(bottom_left),
+            ),
+        )
+        .to_path(BEZIER_TOLERANCE),
         ShapeKind::CustomPath => custom_path(commands, bounds),
     }
 }
@@ -263,6 +282,10 @@ impl DewNode for ClipNode {
 
     fn stretch_axis(&self) -> StretchAxis {
         self.child.stretch_axis()
+    }
+
+    fn priority(&self) -> i32 {
+        self.child.priority()
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
