@@ -14,6 +14,7 @@ use accesskit::{
 };
 use kurbo::{Affine, Rect};
 use nami::{Computed, Signal};
+use smallvec::SmallVec;
 #[cfg(feature = "progress")]
 use waterui::component::progress::ProgressConfig;
 use waterui_backend_core::frame_signals::FrameSignals;
@@ -942,11 +943,11 @@ impl DewNode for ContainerNode {
             .children
             .iter()
             .map(|child| NodeSubview::new(child.as_ref(), state))
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<[_; 4]>>();
         let refs = subviews
             .iter()
             .map(|subview| subview as &dyn SubView)
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<[_; 4]>>();
         // `measure_layout`, not `size_that_fits` alone: explicit alignment
         // guides are resolved from each child's measurement under the
         // proposal `place` selected for it, and a size-only answer would drop
@@ -960,11 +961,11 @@ impl DewNode for ContainerNode {
                 .children
                 .iter()
                 .map(|child| NodeSubview::new(child.as_ref(), &renderer.state))
-                .collect::<Vec<_>>();
+                .collect::<SmallVec<[_; 4]>>();
             let refs = subviews
                 .iter()
                 .map(|subview| subview as &dyn SubView)
-                .collect::<Vec<_>>();
+                .collect::<SmallVec<[_; 4]>>();
             // Placed at the size the parent assigned, never at this layout's own
             // measurement of itself: a stack is content-sized on its cross axis
             // (`HStack::stretch_axis` is `None`, like SwiftUI's), so re-measuring
