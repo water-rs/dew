@@ -470,8 +470,9 @@ impl TabsNode {
             })
     }
 
-    /// Opens the selected tab's page if this is the first time it is shown.
-    fn open_selected(&mut self, renderer: &mut DewRenderer) {
+    /// Opens the selected tab's page if this is the first time it is shown,
+    /// reporting whether a page was built.
+    fn open_selected(&mut self, renderer: &mut DewRenderer) -> bool {
         let index = self.selected();
         let item = &mut self.items[index];
         if let Page::Unopened(builder) = &item.page {
@@ -479,7 +480,9 @@ impl TabsNode {
             let env = item.env.clone();
             let node = crate::views::navigation::build_view(renderer, view, &env, 0);
             item.page = Page::Open(node);
+            return true;
         }
+        false
     }
 
     fn uses_sidebar(&self, bounds: kurbo::Rect) -> bool {
@@ -643,9 +646,11 @@ impl DewNode for TabsNode {
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
-        self.open_selected(renderer);
+        // A page built now is a child this node's ancestors have never
+        // measured — structural, like a stack push or a dynamic swap.
+        let mut changed = self.open_selected(renderer);
         let selected = self.selected();
-        let mut changed = self
+        changed |= self
             .items
             .iter_mut()
             .fold(false, |changed, item| item.patch_chrome(renderer) | changed);

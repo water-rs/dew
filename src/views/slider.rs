@@ -238,7 +238,12 @@ impl DewNode for SliderNode {
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
-        self.min_value_label.patch(renderer) | self.max_value_label.patch(renderer)
+        // The three texts are the sizing inputs; the bound value moves the
+        // fill and `disabled` recolours — neither changes what measure
+        // returns.
+        self.label.measure_invalidated()
+            | self.min_value_label.patch(renderer)
+            | self.max_value_label.patch(renderer)
     }
 }
 

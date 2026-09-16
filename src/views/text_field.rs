@@ -15,7 +15,7 @@ use waterui_core::layout::{ProposalSize, Size, StretchAxis, ViewDimensions};
 
 use crate::dispatch::{DewNode, DewRenderer, RenderContext, WatchedSignal};
 use crate::text::DewState;
-use crate::views::{LabelText, emit_styled_text, to_f32};
+use crate::views::{LabelText, TextSizing, emit_styled_text, to_f32};
 
 /// Minimum input box width.
 const MIN_WIDTH: f64 = 96.0;
@@ -39,6 +39,11 @@ struct TextFieldNode {
     value: WatchedSignal<nami::Binding<waterui_text::styled::StyledStr>>,
     /// The placeholder prompt, subscribed once at build.
     prompt: WatchedSignal<nami::Computed<waterui_text::styled::StyledStr>>,
+    /// The value and prompt texts' sizing inputs — their source signals and
+    /// the font slots the current texts name — since the box measures for the
+    /// wider of the two.
+    value_sizing: TextSizing,
+    prompt_sizing: TextSizing,
     env: Environment,
     accessibility_id: NodeId,
 }
@@ -51,11 +56,16 @@ pub fn build(
     let label = LabelText::new(&config.label, env, renderer.signals());
     let value = WatchedSignal::new(config.value.clone(), renderer.signals());
     let prompt = WatchedSignal::new(config.prompt.content.clone(), renderer.signals());
+    let value_sizing = TextSizing::watch(&value.get(), value.revision(), env, renderer.signals());
+    let prompt_sizing =
+        TextSizing::watch(&prompt.get(), prompt.revision(), env, renderer.signals());
     Box::new(TextFieldNode {
         config,
         label,
         value,
         prompt,
+        value_sizing,
+        prompt_sizing,
         env: env.clone(),
         accessibility_id: renderer.allocate_accessibility_id(),
     })
@@ -91,6 +101,16 @@ impl DewNode for TextFieldNode {
 
     fn stretch_axis(&self) -> StretchAxis {
         StretchAxis::Horizontal
+    }
+
+    fn patch(&mut self, _renderer: &mut DewRenderer) -> bool {
+        self.label.measure_invalidated()
+            | self
+                .value_sizing
+                .invalidated(self.value.revision(), || self.value.get())
+            | self
+                .prompt_sizing
+                .invalidated(self.prompt.revision(), || self.prompt.get())
     }
 }
 
