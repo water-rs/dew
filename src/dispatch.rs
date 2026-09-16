@@ -7,13 +7,16 @@
 
 use core::any::TypeId;
 use core::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use accesskit::{
     ActionRequest as AccessibilityActionRequest, Node as AccessibilityNode, NodeId, Role,
 };
 use kurbo::{Affine, Rect};
+use nami::watcher::BoxWatcherGuard;
 use nami::{Computed, Signal};
+use smallvec::SmallVec;
 #[cfg(feature = "progress")]
 use waterui::component::progress::ProgressConfig;
 use waterui_backend_core::frame_signals::FrameSignals;
@@ -29,9 +32,10 @@ use waterui_core::dynamic::Dynamic;
 use waterui_core::event::OnEvent;
 use waterui_core::gesture::GestureObserver;
 use waterui_core::layout::{
-    ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubView, ViewDimensions,
+    Layout, LayoutPriority, ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubView,
+    SubviewPlacement, ViewDimensions, measure_layout,
 };
-use waterui_core::views::Views;
+use waterui_core::views::{AnyViews, Views};
 use waterui_core::{
     AnyView, Environment, IgnorableMetadata, MainThreadBound, Metadata, Native, Retain, Str, View,
 };
@@ -40,7 +44,7 @@ use waterui_graphics::{SceneView, SceneViewMergeToParent};
 use waterui_layout::Divider;
 use waterui_layout::container::{FixedContainer, LazyContainer};
 use waterui_layout::scroll::ScrollView;
-use waterui_layout::spacer::Spacer;
+use waterui_layout::spacer::{Spacer, SpacerLayout};
 use waterui_navigation::{NavigationSplitLayout, NavigationStack, NavigationView, TabsLayout};
 use waterui_shape::{ClipShape, ResolvedShape};
 use waterui_text::{TextConfig, styled::StyledStr};
@@ -65,45 +69,73 @@ const MAX_BODY_DEPTH: usize = 64;
 #[cfg(not(feature = "gestures"))]
 const INTERACTION_FEATURE_REQUIRED: &str = "dew: interaction metadata (`GestureObserver` / `OnEvent`) needs the `waterui-dew/gestures` feature, which this build does not enable";
 
-/// Where a view draws: the accumulated transform and its local bounds.
+/// Where a view draws: the accumulated transform, its local bounds, and the
+/// proposal layout selected for it.
+///
+/// Equal bounds can carry different answers to "how much space is on offer" —
+/// an unspecified axis and a bounded one produce the same rectangle for a
+/// flexible child while asking different things of whatever it places next —
+/// so the offer travels with the placement instead of being reconstructed
+/// from the bounds.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderContext {
     /// Local-to-window transform for this view.
     pub transform: Affine,
     /// Bounds in local coordinates (origin is this view's top-left).
     pub bounds: Rect,
+    /// The proposal this view was laid out under.
+    pub proposal: ProposalSize,
 }
 
 impl RenderContext {
     /// The root context covering a `width` × `height` window.
+    ///
+    /// The window is the one region a renderer owns outright, so the root is
+    /// also where the bounded offer enters the tree: every proposal below
+    /// descends from this one.
     #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "logical-pixel geometry is far below f32 precision limits"
+    )]
     pub const fn root(width: f64, height: f64) -> Self {
         Self {
             transform: Affine::IDENTITY,
             bounds: Rect::new(0.0, 0.0, width, height),
+            proposal: ProposalSize {
+                width: Some(width as f32),
+                height: Some(height as f32),
+            },
         }
     }
 
-    /// A child context placed at `frame` inside this context.
+    /// A child context for `placement` inside this context.
     ///
-    /// This is the layout path: `frame` is what a measurement pass produced, in
-    /// `f32`, and the child gets its own origin. Chrome that already knows the
-    /// exact region a child must cover uses [`Self::child_in`] instead.
+    /// This is the layout path: `place` answers both the frame the child is
+    /// drawn into — `f32`, converted here with the child getting its own
+    /// origin — and the proposal the child was selected under, which the
+    /// child forwards to whatever it places next. Chrome that already knows
+    /// the exact region a child must cover uses [`Self::child_in`] instead.
     #[must_use]
-    pub fn child(self, frame: LayoutRect) -> Self {
+    pub fn child(self, placement: SubviewPlacement) -> Self {
         Self {
             transform: self.transform
-                * Affine::translate((f64::from(frame.x()), f64::from(frame.y()))),
+                * Affine::translate((
+                    f64::from(placement.frame.x()),
+                    f64::from(placement.frame.y()),
+                )),
             bounds: Rect::new(
                 0.0,
                 0.0,
-                f64::from(frame.width()),
-                f64::from(frame.height()),
+                f64::from(placement.frame.width()),
+                f64::from(placement.frame.height()),
             ),
+            proposal: placement.proposal,
         }
     }
 
-    /// A child context covering `rect` of this context, at `f64` throughout.
+    /// A child context covering `rect` of this context under `proposal`, at
+    /// `f64` throughout.
     ///
     /// A child is placed by its origin and its extent, so the far edge it
     /// reaches is the two added back together and the extent has to be exact
@@ -115,11 +147,16 @@ impl RenderContext {
     /// twenty-odd bits to spare, which is why chrome that carves its window
     /// into regions hands them over here rather than rounding them through
     /// [`Self::child`].
+    ///
+    /// The caller names the proposal itself: the offer the child was measured
+    /// under, or — for a region chrome owns outright without measuring — a
+    /// bounded offer naming the region's extent (see [`bounded_offer`]).
     #[must_use]
-    pub fn child_in(self, rect: Rect) -> Self {
+    pub fn child_in(self, rect: Rect, proposal: ProposalSize) -> Self {
         Self {
             transform: self.transform * Affine::translate((rect.x0, rect.y0)),
             bounds: Rect::new(0.0, 0.0, rect.width(), rect.height()),
+            proposal,
         }
     }
 
@@ -139,12 +176,45 @@ pub(crate) trait DewNode {
         StretchAxis::None
     }
 
+    /// How strongly this node holds on to space when its container runs
+    /// short, forwarded through to [`SubView::priority`]. `0` unless the node
+    /// is a dedicated priority carrier such as [`PriorityNode`] or
+    /// [`SpacerNode`]; transparent wrappers delegate to their child.
+    fn priority(&self) -> i32 {
+        0
+    }
+
+    /// Re-validates the subtree after signal changes, returning whether
+    /// anything this node's `measure`, `stretch_axis` or `priority` could
+    /// answer differently: one of its own reactive sizing inputs, a child's,
+    /// or the child set itself.
+    ///
+    /// The answer is what [`MeasuredNode`] clears its measurement cache on,
+    /// and it propagates: a node whose measurement changed asks the same
+    /// question of every ancestor that measured it. Paint-only state — a
+    /// value, a colour, a scroll offset, disabled or accessibility state —
+    /// returns `false`: it changes what a frame paints, never what it
+    /// measures.
     fn patch(&mut self, _renderer: &mut DewRenderer) -> bool {
         false
     }
 }
 
-/// A node paired with a per-frame cache of its measurement results.
+/// The offer a chrome-owned region makes: exactly its own extent.
+///
+/// Regions chrome carves its window into — a navigation destination's page, a
+/// tab's content area, a split column — are assigned, not negotiated: the
+/// child was never measured, so a bounded proposal naming the region is the
+/// only honest offer.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "logical-pixel geometry is far below f32 precision limits"
+)]
+pub(crate) fn bounded_offer(rect: Rect) -> ProposalSize {
+    ProposalSize::new(Some(rect.width() as f32), Some(rect.height() as f32))
+}
+
+/// A node paired with a retained cache of its measurement results.
 ///
 /// Container layouts negotiate by probing: `size_that_fits` asks every child
 /// for a size, then `place` asks again, and each child that is itself a
@@ -154,21 +224,35 @@ pub(crate) trait DewNode {
 /// `parley` layout.
 ///
 /// Wrapping every node in this cache collapses that to one measurement per
-/// distinct [`ProposalSize`] per node per frame. The cache is cleared in
-/// [`DewNode::patch`], which the runtime runs over the whole tree immediately
-/// before rendering, so a cached size can never outlive the signal values it
-/// came from. The per-frame lifetime is the point: a longer-lived cache would
-/// have to track every signal each measurement happened to read.
+/// distinct [`ProposalSize`] per node. Entries are keyed by the raw offer —
+/// equal bounds under different proposals answer differently, so the offer
+/// is part of the key, never reconstructed from the placed bounds — and
+/// bounded LRU-style, so a sequence of distinct offers such as a resize keeps
+/// its recent answers without growing the tree's footprint unboundedly.
+///
+/// The cache survives across frames, which is what makes a retained tree
+/// cheaper than a rebuild: [`DewNode::patch`] clears it only when the node
+/// reports that a sizing input it or a descendant reads actually moved — its
+/// own signals, a watched font or layout parameter, its child set — and the
+/// same answer propagates to ancestors, whose measurements read this node's.
+/// A frame that changed no sizing input measures nothing.
 ///
 /// This is also where `AGENTS.md` places the cache — measurement caching is
 /// the `SubView`'s responsibility, never the `Layout`'s. Dew confines
-/// measurement to the render thread ([`NodeSubview`] returns `true` from
-/// `require_main_thread`), so a plain [`RefCell`] suffices and no
-/// synchronization is needed.
+/// measurement to the render thread through [`MainThreadBound`], so a plain
+/// [`RefCell`] suffices and no synchronization is needed.
 struct MeasuredNode {
     inner: Box<dyn DewNode>,
+    /// Newest entry last; the most recent offers a node was probed under.
     cache: RefCell<Vec<(ProposalSize, ViewDimensions)>>,
 }
+
+/// The most offers a node remembers at once.
+///
+/// A layout pass probes each node a handful of times; the cap exists for
+/// sustained proposal churn — a window dragged through sizes — so the cache's
+/// memory stays bounded while its most recent answers stay warm.
+const MEASUREMENT_CACHE_ENTRIES: usize = 16;
 
 impl MeasuredNode {
     fn wrap(inner: Box<dyn DewNode>) -> Box<dyn DewNode> {
@@ -181,19 +265,26 @@ impl MeasuredNode {
 
 impl DewNode for MeasuredNode {
     fn measure(&self, state: &RefCell<DewState>, proposal: ProposalSize) -> ViewDimensions {
-        let cached = self
-            .cache
-            .borrow()
-            .iter()
-            .find(|(key, _)| *key == proposal)
-            .map(|(_, dimensions)| dimensions.clone());
-        if let Some(dimensions) = cached {
+        let mut cache = self.cache.borrow_mut();
+        if let Some(index) = cache.iter().position(|(key, _)| {
+            key.width.map(f32::to_bits) == proposal.width.map(f32::to_bits)
+                && key.height.map(f32::to_bits) == proposal.height.map(f32::to_bits)
+        }) {
+            let (key, dimensions) = cache.remove(index);
+            let answer = dimensions.clone();
+            cache.push((key, dimensions));
+            drop(cache);
             state.borrow_mut().work.measures_reused += 1;
-            return dimensions;
+            return answer;
         }
+        drop(cache);
         let dimensions = self.inner.measure(state, proposal);
         state.borrow_mut().work.measures_computed += 1;
-        self.cache.borrow_mut().push((proposal, dimensions.clone()));
+        let mut cache = self.cache.borrow_mut();
+        if cache.len() == MEASUREMENT_CACHE_ENTRIES {
+            cache.remove(0);
+        }
+        cache.push((proposal, dimensions.clone()));
         dimensions
     }
 
@@ -205,9 +296,16 @@ impl DewNode for MeasuredNode {
         self.inner.stretch_axis()
     }
 
+    fn priority(&self) -> i32 {
+        self.inner.priority()
+    }
+
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
-        self.cache.borrow_mut().clear();
-        self.inner.patch(renderer)
+        if self.inner.patch(renderer) {
+            self.cache.borrow_mut().clear();
+            return true;
+        }
+        false
     }
 }
 
@@ -604,6 +702,15 @@ fn build_unmeasured_node(
             child: build_node(renderer, content, env, depth + 1),
         });
     }
+    if type_id == TypeId::of::<Metadata<LayoutPriority>>() {
+        let Metadata { content, value } = *view
+            .downcast::<Metadata<LayoutPriority>>()
+            .expect("dew layout-priority downcast must match its type id");
+        return Box::new(PriorityNode {
+            priority: value.get(),
+            child: build_node(renderer, content, env, depth + 1),
+        });
+    }
     // Accessibility naming metadata (`.a11y_label()` / `.a11y_id()`) reaches the
     // dispatcher as an ignorable wrapper whose `body` is its content, so falling
     // through to the generic expansion below would render the content correctly
@@ -637,22 +744,9 @@ fn build_unmeasured_node(
             .downcast::<Native<LazyContainer>>()
             .expect("dew lazy container downcast must match its type id");
         let (layout, contents) = native.into_inner().into_inner();
-        // Dew materializes the whole collection instead of virtualizing it. Its
-        // screens hold a handful of widgets — the budgeted simulation is a
-        // twelve-product panel — so a visible-window index would cost more
-        // bookkeeping and allocation than the rows it avoids building, and this
-        // backend is budgeted on exactly that. Rendering nothing, which is what
-        // an unhandled `LazyContainer` did before, is not the cheaper option.
-        let count = contents.len().get();
-        let children = (0..count)
-            .map(|index| {
-                let child = contents.get_view(index).unwrap_or_else(|| {
-                    panic!("dew LazyContainer failed to materialize child at index {index}")
-                });
-                build_node(renderer, child, env, depth + 1)
-            })
-            .collect();
-        return Box::new(ContainerNode::new(layout, children));
+        return Box::new(LazyContainerNode::build(
+            renderer, layout, contents, env, depth,
+        ));
     }
     if type_id == TypeId::of::<Native<FixedContainer>>() {
         let native = *view
@@ -663,7 +757,7 @@ fn build_unmeasured_node(
             .into_iter()
             .map(|child| build_node(renderer, child, env, depth + 1))
             .collect();
-        return Box::new(ContainerNode::new(layout, children));
+        return Box::new(ContainerNode::new(layout, children, renderer.signals()));
     }
     if type_id == TypeId::of::<Dynamic>() {
         let dynamic = *view
@@ -733,13 +827,15 @@ fn build_unmeasured_node(
             .expect("dew TextConfig downcast must match its type id");
         let config = text.into_inner();
         let content = WatchedSignal::new(config.content, renderer.signals());
+        let fonts = theme::WatchedFonts::styled(
+            &content.get(),
+            content.revision(),
+            env,
+            renderer.signals(),
+        );
         return Box::new(TextNode {
-            fonts: RefCell::new(theme::WatchedFonts::styled(
-                &content.get(),
-                content.revision(),
-                env,
-                renderer.signals(),
-            )),
+            applied: Cell::new(TextRevision::new(content.revision(), fonts.revision())),
+            fonts: RefCell::new(fonts),
             content,
             env: env.clone(),
             cache: RefCell::new(TextLayoutCache::default()),
@@ -748,12 +844,14 @@ fn build_unmeasured_node(
         });
     }
     if type_id == TypeId::of::<Str>() {
+        let fonts = theme::WatchedFonts::plain(env, renderer.signals());
         return Box::new(StrNode {
             value: *view
                 .downcast::<Str>()
                 .expect("dew Str downcast must match its type id"),
             cache: RefCell::new(TextLayoutCache::default()),
-            fonts: theme::WatchedFonts::plain(env, renderer.signals()),
+            applied: Cell::new(fonts.revision()),
+            fonts,
             env: env.clone(),
             accessibility_id: renderer.allocate_accessibility_id(),
         });
@@ -762,8 +860,8 @@ fn build_unmeasured_node(
         let spacer = *view
             .downcast::<Native<Spacer>>()
             .expect("dew Spacer downcast must match its type id");
-        return Box::new(EmptyNode {
-            stretch: spacer.stretch_axis(),
+        return Box::new(SpacerNode {
+            layout: SpacerLayout::from(spacer.into_inner()),
         });
     }
     if type_id == TypeId::of::<Native<()>>() {
@@ -842,12 +940,12 @@ impl SubView for NodeSubview<'_> {
     }
 
     fn priority(&self) -> i32 {
-        0
+        self.node.priority()
     }
 }
 
 struct ContainerNode {
-    layout: Box<dyn waterui_core::layout::Layout>,
+    layout: Box<dyn Layout>,
     children: Vec<Box<dyn DewNode>>,
     /// Scratch for the children's stretch axes, reused across calls.
     ///
@@ -856,14 +954,48 @@ struct ContainerNode {
     /// more allocations than the whole rest of the frame put together (the
     /// vending-machine simulation is the gate that says so).
     child_axes: RefCell<Vec<StretchAxis>>,
+    /// Bumped by the layout's own `watch_invalidation` callback whenever a
+    /// reactive layout parameter — a `.frame` bound, padding, spacing, a grid
+    /// track — moves.
+    layout_revision: Rc<Cell<u64>>,
+    /// The `layout_revision` the last `patch` validated.
+    applied_layout_revision: Cell<u64>,
+    /// The guards `watch_invalidation` returned; dropping them would stop the
+    /// bumps `layout_revision` counts.
+    _layout_watch: Vec<BoxWatcherGuard>,
 }
 
 impl ContainerNode {
-    fn new(layout: Box<dyn waterui_core::layout::Layout>, children: Vec<Box<dyn DewNode>>) -> Self {
+    fn new(
+        layout: Box<dyn Layout>,
+        children: Vec<Box<dyn DewNode>>,
+        signals: FrameSignals,
+    ) -> Self {
+        // The layout's own reactive parameters invalidate exactly this node:
+        // `watch_invalidation` returns one guard per reactive field the layout
+        // implementation reads, and any of them firing bumps the revision the
+        // node is validated against — and asks for the frame the change
+        // otherwise would never produce.
+        let layout_revision = Rc::new(Cell::new(0_u64));
+        let layout_watch = layout.watch_invalidation(Rc::new({
+            let revision = Rc::clone(&layout_revision);
+            move || {
+                revision.set(
+                    revision
+                        .get()
+                        .checked_add(1)
+                        .expect("dew layout revision overflow"),
+                );
+                signals.request_refresh();
+            }
+        }));
         Self {
             layout,
             children,
             child_axes: RefCell::new(Vec::new()),
+            layout_revision,
+            applied_layout_revision: Cell::new(0),
+            _layout_watch: layout_watch,
         }
     }
 }
@@ -874,35 +1006,44 @@ impl DewNode for ContainerNode {
             .children
             .iter()
             .map(|child| NodeSubview::new(child.as_ref(), state))
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<[_; 4]>>();
         let refs = subviews
             .iter()
             .map(|subview| subview as &dyn SubView)
-            .collect::<Vec<_>>();
-        ViewDimensions::new(self.layout.size_that_fits(proposal, &refs))
+            .collect::<SmallVec<[_; 4]>>();
+        // `measure_layout`, not `size_that_fits` alone: explicit alignment
+        // guides are resolved from each child's measurement under the
+        // proposal `place` selected for it, and a size-only answer would drop
+        // them.
+        measure_layout(self.layout.as_ref(), proposal, &refs)
     }
 
     fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
-        let frames = {
+        let placements = {
             let subviews = self
                 .children
                 .iter()
                 .map(|child| NodeSubview::new(child.as_ref(), &renderer.state))
-                .collect::<Vec<_>>();
+                .collect::<SmallVec<[_; 4]>>();
             let refs = subviews
                 .iter()
                 .map(|subview| subview as &dyn SubView)
-                .collect::<Vec<_>>();
+                .collect::<SmallVec<[_; 4]>>();
             // Placed at the size the parent assigned, never at this layout's own
             // measurement of itself: a stack is content-sized on its cross axis
             // (`HStack::stretch_axis` is `None`, like SwiftUI's), so re-measuring
             // here would shrink a row of cross-stretching children — a row of
             // colours, say — to zero height and draw nothing. Distributing the
             // assigned box among the children is exactly what `place` is for.
-            self.layout.place(placement_rect(ctx.bounds), &refs)
+            //
+            // Each placement carries the proposal the layout selected for that
+            // child — equal bounds under different proposals place children
+            // differently, so the offer travels with the frame.
+            self.layout
+                .place(placement_rect(ctx.bounds), ctx.proposal, &refs)
         };
-        for (child, frame) in self.children.iter_mut().zip(frames) {
-            child.render(renderer, ctx.child(frame));
+        for (child, placement) in self.children.iter_mut().zip(placements) {
+            child.render(renderer, ctx.child(placement));
         }
     }
 
@@ -918,9 +1059,146 @@ impl DewNode for ContainerNode {
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
-        self.children
-            .iter_mut()
-            .fold(false, |changed, child| child.patch(renderer) | changed)
+        let revision = self.layout_revision.get();
+        self.children.iter_mut().fold(
+            self.applied_layout_revision.replace(revision) != revision,
+            |changed, child| child.patch(renderer) | changed,
+        )
+    }
+}
+
+/// The retained node behind a [`LazyContainer`]: a [`ContainerNode`] whose
+/// child set reconciles against the collection's reported ids instead of
+/// being fixed at build.
+///
+/// `Views::watch` reports the ids currently in the materialized range; `patch`
+/// diffs them against the retained set and rebuilds only the positions whose
+/// identity moved. A reordered or surviving item keeps its retained subtree —
+/// its measurement cache, its shaped text, its signal subscriptions — which a
+/// positional rebuild would throw away, and a membership change reports as a
+/// sizing change because the children are what the layout measures.
+struct LazyContainerNode {
+    container: ContainerNode,
+    contents: AnyViews<AnyView>,
+    env: Environment,
+    depth: usize,
+    /// The ids materialized, positionally parallel to `container.children`.
+    ids: Vec<LazyChildId>,
+    /// The newest id list the collection watcher reported, drained by `patch`.
+    pending: Rc<RefCell<Option<Vec<LazyChildId>>>>,
+    _watch: BoxWatcherGuard,
+}
+
+/// The collection id `AnyViews` reports per position.
+type LazyChildId = <AnyViews<AnyView> as Views>::Id;
+
+impl LazyContainerNode {
+    fn build(
+        renderer: &mut DewRenderer,
+        layout: Box<dyn Layout>,
+        contents: AnyViews<AnyView>,
+        env: &Environment,
+        depth: usize,
+    ) -> Self {
+        // Dew materializes the whole collection instead of virtualizing it. Its
+        // screens hold a handful of widgets — the budgeted simulation is a
+        // twelve-product panel — so a visible-window index would cost more
+        // bookkeeping and allocation than the rows it avoids building, and this
+        // backend is budgeted on exactly that. Rendering nothing, which is what
+        // an unhandled `LazyContainer` did before, is not the cheaper option.
+        let count = contents.len().get();
+        let children = (0..count)
+            .map(|index| build_node(renderer, materialize(&contents, index), env, depth + 1))
+            .collect();
+        let ids = (0..count)
+            .map(|index| {
+                contents
+                    .get_id(index)
+                    .unwrap_or_else(|| panic!("dew LazyContainer reported no id at index {index}"))
+            })
+            .collect();
+        let pending = Rc::new(RefCell::new(None));
+        let watch = contents.watch(.., {
+            let pending = Rc::clone(&pending);
+            let signals = renderer.signals();
+            move |context| {
+                *pending.borrow_mut() = Some(context.into_value().to_vec());
+                signals.request_refresh();
+            }
+        });
+        Self {
+            container: ContainerNode::new(layout, children, renderer.signals()),
+            contents,
+            env: env.clone(),
+            depth,
+            ids,
+            pending,
+            _watch: watch,
+        }
+    }
+
+    /// Rebuilds only the positions whose identity moved, returning whether
+    /// the membership changed at all.
+    fn reconcile(&mut self, renderer: &mut DewRenderer) -> bool {
+        let Some(ids) = self.pending.borrow_mut().take() else {
+            return false;
+        };
+        if ids == self.ids {
+            return false;
+        }
+        // Views guarantees a unique identifier for every item; the map
+        // therefore retains exactly one semantic subtree per collection id.
+        let mut retained: BTreeMap<LazyChildId, Box<dyn DewNode>> = core::mem::take(&mut self.ids)
+            .into_iter()
+            .zip(core::mem::take(&mut self.container.children))
+            .collect();
+        // Identity, not position: a moved or reordered item keeps the retained
+        // subtree it already had, and only a genuinely new id builds a node.
+        let children = ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                retained.remove(id).unwrap_or_else(|| {
+                    build_node(
+                        renderer,
+                        materialize(&self.contents, index),
+                        &self.env,
+                        self.depth,
+                    )
+                })
+            })
+            .collect();
+        self.container.children = children;
+        self.ids = ids;
+        true
+    }
+}
+
+fn materialize(contents: &AnyViews<AnyView>, index: usize) -> AnyView {
+    contents
+        .get_view(index)
+        .unwrap_or_else(|| panic!("dew LazyContainer failed to materialize child at index {index}"))
+}
+
+impl DewNode for LazyContainerNode {
+    fn measure(&self, state: &RefCell<DewState>, proposal: ProposalSize) -> ViewDimensions {
+        self.container.measure(state, proposal)
+    }
+
+    fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
+        self.container.render(renderer, ctx);
+    }
+
+    fn stretch_axis(&self) -> StretchAxis {
+        self.container.stretch_axis()
+    }
+
+    fn priority(&self) -> i32 {
+        self.container.priority()
+    }
+
+    fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
+        self.reconcile(renderer) | self.container.patch(renderer)
     }
 }
 
@@ -975,6 +1253,10 @@ impl DewNode for NamingNode {
         self.child.stretch_axis()
     }
 
+    fn priority(&self) -> i32 {
+        self.child.priority()
+    }
+
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
         self.child.patch(renderer)
     }
@@ -996,6 +1278,43 @@ impl DewNode for RetainNode {
 
     fn stretch_axis(&self) -> StretchAxis {
         self.child.stretch_axis()
+    }
+
+    fn priority(&self) -> i32 {
+        self.child.priority()
+    }
+
+    fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
+        self.child.patch(renderer)
+    }
+}
+
+/// The retained node behind `.layout_priority(..)`.
+///
+/// Layout-transparent like [`RetainNode`] — it measures, renders, stretches
+/// and patches as its child — except the value it carries is the child's
+/// answer to [`SubView::priority`], which is what lets a stack squeeze every
+/// sibling below this band before it touches this child.
+struct PriorityNode {
+    priority: i32,
+    child: Box<dyn DewNode>,
+}
+
+impl DewNode for PriorityNode {
+    fn measure(&self, state: &RefCell<DewState>, proposal: ProposalSize) -> ViewDimensions {
+        self.child.measure(state, proposal)
+    }
+
+    fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
+        self.child.render(renderer, ctx);
+    }
+
+    fn stretch_axis(&self) -> StretchAxis {
+        self.child.stretch_axis()
+    }
+
+    fn priority(&self) -> i32 {
+        self.priority
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
@@ -1050,6 +1369,10 @@ impl DewNode for DynamicNode {
 
     fn stretch_axis(&self) -> StretchAxis {
         self.child.stretch_axis()
+    }
+
+    fn priority(&self) -> i32 {
+        self.child.priority()
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
@@ -1119,6 +1442,8 @@ struct TextNode {
     /// and asks for a frame. Behind a `RefCell` because the set is rebuilt
     /// from the content, and measurement runs behind `&self`.
     fonts: RefCell<theme::WatchedFonts>,
+    /// The revision `patch` last validated — content and fonts together.
+    applied: Cell<TextRevision>,
     env: Environment,
     cache: RefCell<TextLayoutCache>,
     /// Maximum laid-out lines, from `TextConfig::line_limit`.
@@ -1164,10 +1489,12 @@ impl DewNode for TextNode {
     fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
         // Scoped, exactly as `measure` reads it: a subtree that installs its
         // own foreground has to be painted in it, and a render that disagreed
-        // with the measurement would re-shape the text a second time.
+        // with the measurement would re-shape the text a second time. The
+        // width offer is the one layout selected — the bounds may be equal
+        // under a different proposal, and the text wraps to the offer.
         let foreground = theme::foreground(&self.env);
         let revision = self.revision();
-        let max_width = max_width_from_bounds(ctx.bounds);
+        let max_width = ctx.proposal.width;
         let transform = ctx.transform * Affine::translate((ctx.bounds.x0, ctx.bounds.y0));
         let outcome = self.cache.borrow_mut().emit(
             revision,
@@ -1197,6 +1524,11 @@ impl DewNode for TextNode {
             );
         }
     }
+
+    fn patch(&mut self, _renderer: &mut DewRenderer) -> bool {
+        let revision = self.revision();
+        self.applied.replace(revision) != revision
+    }
 }
 
 struct StrNode {
@@ -1206,6 +1538,9 @@ struct StrNode {
     /// resolves, watched for the same reason. A fixed string names no other,
     /// so this set never changes.
     fonts: theme::WatchedFonts,
+    /// The font revision `patch` last validated — the only input a fixed
+    /// string's measurement reads.
+    applied: Cell<u64>,
     env: Environment,
     accessibility_id: NodeId,
 }
@@ -1234,7 +1569,7 @@ impl DewNode for StrNode {
 
     fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
         let foreground = theme::foreground(&self.env);
-        let max_width = max_width_from_bounds(ctx.bounds);
+        let max_width = ctx.proposal.width;
         let transform = ctx.transform * Affine::translate((ctx.bounds.x0, ctx.bounds.y0));
         let outcome = self.cache.borrow_mut().emit(
             TextRevision::font_only(self.fonts.revision()),
@@ -1263,6 +1598,11 @@ impl DewNode for StrNode {
                 },
             );
         }
+    }
+
+    fn patch(&mut self, _renderer: &mut DewRenderer) -> bool {
+        let revision = self.fonts.revision();
+        self.applied.replace(revision) != revision
     }
 }
 
@@ -1337,6 +1677,33 @@ impl DewNode for EmptyNode {
     }
 }
 
+/// The retained node behind a native [`Spacer`].
+///
+/// The spacer's own [`SpacerLayout`] answers its measurement — the minimum
+/// length is the intrinsic size on both axes — and the container is what
+/// stretches it along the main axis. The node's only contribution beyond that
+/// is [`Spacer::DEFAULT_LAYOUT_PRIORITY`]: a stack squeezes the gap before it
+/// squeezes any ordinary content.
+struct SpacerNode {
+    layout: SpacerLayout,
+}
+
+impl DewNode for SpacerNode {
+    fn measure(&self, _state: &RefCell<DewState>, proposal: ProposalSize) -> ViewDimensions {
+        measure_layout(&self.layout, proposal, &[])
+    }
+
+    fn render(&mut self, _renderer: &mut DewRenderer, _ctx: RenderContext) {}
+
+    fn stretch_axis(&self) -> StretchAxis {
+        StretchAxis::MainAxis
+    }
+
+    fn priority(&self) -> i32 {
+        Spacer::DEFAULT_LAYOUT_PRIORITY
+    }
+}
+
 /// The box a container distributes among its children: the one its parent
 /// placed it in.
 #[expect(
@@ -1347,17 +1714,12 @@ const fn placement_rect(bounds: Rect) -> LayoutRect {
     LayoutRect::from_size(Size::new(bounds.width() as f32, bounds.height() as f32))
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "logical-pixel geometry is far below f32 precision limits"
-)]
-fn max_width_from_bounds(bounds: Rect) -> Option<f32> {
-    (bounds.width() > 0.0).then(|| bounds.width() as f32)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod layout_contract;
+    mod measure_invalidation;
 
     /// A child reaches the far edge of the region it was given.
     ///
@@ -1382,7 +1744,7 @@ mod tests {
         );
 
         let painted = RenderContext::root(320.0, 480.0)
-            .child_in(Rect::new(NEAR, NEAR, FAR, FAR))
+            .child_in(Rect::new(NEAR, NEAR, FAR, FAR), ProposalSize::UNSPECIFIED)
             .window_bounds();
         assert_eq!(painted.x0.to_bits(), NEAR.to_bits());
         assert_eq!(painted.y0.to_bits(), NEAR.to_bits());

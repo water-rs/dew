@@ -14,7 +14,7 @@ use crate::accessibility::ActionTarget;
 use crate::dispatch::{DewNode, DewRenderer, RenderContext, WatchedSignal};
 use crate::pointer::{PointerHandler, PointerTargetHandle};
 use crate::text::DewState;
-use crate::views::{LabelText, emit_styled_text, to_f32};
+use crate::views::{LabelText, TextSizing, emit_styled_text, to_f32};
 
 /// Side length of each square stepper button.
 const BUTTON_SIZE: f64 = 28.0;
@@ -50,6 +50,10 @@ struct StepperNode {
     value: WatchedSignal<Binding<i32>>,
     /// The step amount, subscribed once at build.
     step: WatchedSignal<Computed<i32>>,
+    /// The value text's sizing inputs — its source signal and the font slots
+    /// the current text names — so a step that changes "9" into "10"
+    /// invalidates the measure that sized for "9".
+    value_sizing: TextSizing,
     env: Environment,
     decrement: PointerTargetHandle,
     increment: PointerTargetHandle,
@@ -130,6 +134,19 @@ pub fn build(
         .map(|formatter| WatchedSignal::new(formatter, renderer.signals()));
     let value = WatchedSignal::new(config.value.clone(), renderer.signals());
     let step = WatchedSignal::new(config.step.clone(), renderer.signals());
+    // The value text's source is the formatter when one is installed, the raw
+    // value otherwise — the same question `value_text` answers.
+    let value_sizing = {
+        let source_revision = formatter
+            .as_ref()
+            .map_or_else(|| value.revision(), WatchedSignal::revision);
+        TextSizing::watch(
+            &value_text_for_measure(&config),
+            source_revision,
+            env,
+            renderer.signals(),
+        )
+    };
     let accessibility_id = renderer.allocate_accessibility_id();
     Box::new(StepperNode {
         config,
@@ -137,6 +154,7 @@ pub fn build(
         formatter,
         value,
         step,
+        value_sizing,
         env: env.clone(),
         decrement,
         increment,
@@ -198,6 +216,18 @@ impl DewNode for StepperNode {
 
     fn stretch_axis(&self) -> StretchAxis {
         StretchAxis::Horizontal
+    }
+
+    fn patch(&mut self, _renderer: &mut DewRenderer) -> bool {
+        let source_revision = self
+            .formatter
+            .as_ref()
+            .map_or_else(|| self.value.revision(), WatchedSignal::revision);
+        // `step` and `range` constrain the action, not the measured box.
+        self.label.measure_invalidated()
+            | self
+                .value_sizing
+                .invalidated(source_revision, || self.value_text())
     }
 }
 

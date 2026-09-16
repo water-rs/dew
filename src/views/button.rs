@@ -162,6 +162,13 @@ impl DewNode for ButtonNode {
             );
         }
     }
+
+    fn patch(&mut self, _renderer: &mut DewRenderer) -> bool {
+        // The label is the only sizing input: the button's box is padding plus
+        // the label's measure. Disabled state recolours and disarms, nothing
+        // more.
+        self.label.measure_invalidated()
+    }
 }
 
 fn palette(

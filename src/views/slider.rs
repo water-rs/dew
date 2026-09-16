@@ -195,7 +195,9 @@ impl DewNode for SliderNode {
                 bounds.x0 + f64::from(min_size.width),
                 control_bottom,
             );
-            self.min_value_label.render(renderer, ctx.child_in(rect));
+            // Measured unspecified above; the region only positions it.
+            self.min_value_label
+                .render(renderer, ctx.child_in(rect, ProposalSize::UNSPECIFIED));
             track_left += f64::from(min_size.width) + LABEL_SPACING;
         }
         if max_size.width > 0.0 {
@@ -205,7 +207,8 @@ impl DewNode for SliderNode {
                 bounds.x1,
                 control_bottom,
             );
-            self.max_value_label.render(renderer, ctx.child_in(rect));
+            self.max_value_label
+                .render(renderer, ctx.child_in(rect, ProposalSize::UNSPECIFIED));
             track_right -= f64::from(max_size.width) + LABEL_SPACING;
         }
         assert!(
@@ -235,7 +238,12 @@ impl DewNode for SliderNode {
     }
 
     fn patch(&mut self, renderer: &mut DewRenderer) -> bool {
-        self.min_value_label.patch(renderer) | self.max_value_label.patch(renderer)
+        // The three texts are the sizing inputs; the bound value moves the
+        // fill and `disabled` recolours — neither changes what measure
+        // returns.
+        self.label.measure_invalidated()
+            | self.min_value_label.patch(renderer)
+            | self.max_value_label.patch(renderer)
     }
 }
 

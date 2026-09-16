@@ -102,7 +102,9 @@ impl DewNode for ProgressNode {
                 bounds.x1,
                 (bounds.y0 + label_height).min(bounds.y1),
             );
-            self.label.render(renderer, ctx.child_in(rect));
+            // Measured unspecified above; the region only positions it.
+            self.label
+                .render(renderer, ctx.child_in(rect, ProposalSize::UNSPECIFIED));
         }
         let bar_top = bounds.y0 + label_height + if label_height > 0.0 { BAR_SPACING } else { 0.0 };
         let track = Rect::new(bounds.x0, bar_top, bounds.x1, bar_top + BAR_HEIGHT);
@@ -141,7 +143,8 @@ impl DewNode for ProgressNode {
                 bounds.y1,
             );
             if rect.height() > 0.0 {
-                self.value_label.render(renderer, ctx.child_in(rect));
+                self.value_label
+                    .render(renderer, ctx.child_in(rect, ProposalSize::UNSPECIFIED));
             }
         }
     }

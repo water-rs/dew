@@ -142,6 +142,12 @@ impl DewNode for ToggleNode {
     fn stretch_axis(&self) -> StretchAxis {
         StretchAxis::Horizontal
     }
+
+    fn patch(&mut self, _renderer: &mut DewRenderer) -> bool {
+        // The label is the only sizing input; `on` moves the thumb and
+        // `disabled` recolours — neither changes what measure returns.
+        self.label.measure_invalidated()
+    }
 }
 
 fn render(
