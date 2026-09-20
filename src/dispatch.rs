@@ -44,7 +44,8 @@ use waterui_graphics::{SceneView, SceneViewMergeToParent};
 use waterui_layout::Divider;
 use waterui_layout::container::{FixedContainer, LazyContainer};
 use waterui_layout::scroll::ScrollView;
-use waterui_layout::spacer::{Spacer, SpacerLayout};
+use waterui_layout::spacer::Spacer;
+use waterui_layout::stack::Axis;
 use waterui_navigation::{NavigationSplitLayout, NavigationStack, NavigationView, TabsLayout};
 use waterui_shape::{ClipShape, ResolvedShape};
 use waterui_text::{TextConfig, styled::StyledStr};
@@ -861,7 +862,8 @@ fn build_unmeasured_node(
             .downcast::<Native<Spacer>>()
             .expect("dew Spacer downcast must match its type id");
         return Box::new(SpacerNode {
-            layout: SpacerLayout::from(spacer.into_inner()),
+            min_length: spacer.into_inner().min_length(),
+            axis: env.get::<Axis>().copied(),
         });
     }
     if type_id == TypeId::of::<Native<()>>() {
@@ -1679,18 +1681,29 @@ impl DewNode for EmptyNode {
 
 /// The retained node behind a native [`Spacer`].
 ///
-/// The spacer's own [`SpacerLayout`] answers its measurement — the minimum
-/// length is the intrinsic size on both axes — and the container is what
-/// stretches it along the main axis. The node's only contribution beyond that
-/// is [`Spacer::DEFAULT_LAYOUT_PRIORITY`]: a stack squeezes the gap before it
+/// The leaf contract (`docs/layout-spec.md` §6): a spacer answers its minimum
+/// length on the enclosing stack's main axis and zero on the cross axis,
+/// whatever the proposal, and claims nothing outside a stack. The stack
+/// publishes its [`Axis`] in the environment, so the node resolves it once at
+/// build; the container is what stretches the gap along that axis at
+/// placement. The node's only contribution beyond that is
+/// [`Spacer::DEFAULT_LAYOUT_PRIORITY`]: a stack squeezes the gap before it
 /// squeezes any ordinary content.
 struct SpacerNode {
-    layout: SpacerLayout,
+    min_length: f32,
+    axis: Option<Axis>,
 }
 
 impl DewNode for SpacerNode {
-    fn measure(&self, _state: &RefCell<DewState>, proposal: ProposalSize) -> ViewDimensions {
-        measure_layout(&self.layout, proposal, &[])
+    fn measure(&self, _state: &RefCell<DewState>, _proposal: ProposalSize) -> ViewDimensions {
+        let size = self.axis.map_or_else(Size::zero, |axis| {
+            if axis.is_horizontal() {
+                Size::new(self.min_length, 0.0)
+            } else {
+                Size::new(0.0, self.min_length)
+            }
+        });
+        ViewDimensions::new(size)
     }
 
     fn render(&mut self, _renderer: &mut DewRenderer, _ctx: RenderContext) {}

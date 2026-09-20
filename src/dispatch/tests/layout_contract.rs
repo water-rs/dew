@@ -21,6 +21,7 @@ use waterui_core::layout::{
 use waterui_core::{AnyView, Environment, IgnorableMetadata, Metadata, Retain, Str, View};
 use waterui_graphics::color::Color;
 use waterui_layout::container::FixedContainer;
+use waterui_layout::stack::Axis;
 use waterui_layout::{Spacer, scroll_horizontal, spacer, spacer_min};
 
 use crate::dispatch::{DewNode, DewRenderer, RenderContext, build_node};
@@ -273,23 +274,38 @@ fn spacer_default_priority_survives_wrappers_and_explicit_overrides() {
     }
 }
 
-/// A spacer measures its minimum length on both axes — zero for a flexible
-/// gap — which is what a stack expands from when it distributes surplus.
+/// A spacer measures its minimum length on the enclosing stack's main axis
+/// and zero on the cross axis — the floor the stack keeps under compression
+/// and expands from when it distributes surplus — and claims nothing outside
+/// a stack.
 #[test]
 fn spacer_reports_its_minimum_length_and_default_priority() {
-    let env = Environment::new();
     let mut renderer = test_renderer();
-    let gap = build_node(&mut renderer, AnyView::new(spacer_min(12.0)), &env, 0);
-    assert_eq!(gap.priority(), Spacer::DEFAULT_LAYOUT_PRIORITY);
+    let measure = |renderer: &mut DewRenderer, view: AnyView, env: &Environment| {
+        let node = build_node(renderer, view, env, 0);
+        assert_eq!(node.priority(), Spacer::DEFAULT_LAYOUT_PRIORITY);
+        node.measure(renderer.state_cell(), ProposalSize::UNSPECIFIED)
+            .size
+    };
+    let mut column = Environment::new();
+    column.insert(Axis::Vertical);
+    let mut row = Environment::new();
+    row.insert(Axis::Horizontal);
+    let outside = Environment::new();
     assert_eq!(
-        gap.measure(renderer.state_cell(), ProposalSize::UNSPECIFIED)
-            .size,
-        Size::new(12.0, 12.0),
+        measure(&mut renderer, AnyView::new(spacer_min(12.0)), &column),
+        Size::new(0.0, 12.0),
     );
-    let bare = build_node(&mut renderer, AnyView::new(spacer()), &env, 0);
     assert_eq!(
-        bare.measure(renderer.state_cell(), ProposalSize::UNSPECIFIED)
-            .size,
+        measure(&mut renderer, AnyView::new(spacer_min(12.0)), &row),
+        Size::new(12.0, 0.0),
+    );
+    assert_eq!(
+        measure(&mut renderer, AnyView::new(spacer_min(12.0)), &outside),
+        Size::new(0.0, 0.0),
+    );
+    assert_eq!(
+        measure(&mut renderer, AnyView::new(spacer()), &column),
         Size::new(0.0, 0.0),
     );
 }
