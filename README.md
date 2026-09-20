@@ -58,7 +58,7 @@ The complete embedded rendering flow runs natively in a window — no
 cross-compilation, the LVGL-SDL / Slint-preview pattern:
 
 ```bash
-cargo run -p waterui-dew --example watch_sim --features embedded-simulator
+cargo run --example watch_sim --features embedded-simulator
 ```
 
 `embedded_simulator::run(width, height, title, env, build_root, on_tick)` opens a
@@ -96,11 +96,11 @@ None of that depends on host speed, so the test is deterministic and runs in
 CI rather than being `#[ignore]`d.
 
 ```bash
-cargo nextest run -p waterui-dew -E 'test(vending_machine_holds_its_embedded_work_budget)'
+cargo nextest run -E 'test(vending_machine_holds_its_embedded_work_budget)'
 
 # Longer soak, for heap-retention confidence.
 DEW_PERF_WARMUP=120 DEW_PERF_FRAMES=3600 \
-  cargo nextest run -p waterui-dew -E 'test(vending_machine_holds)'
+  cargo nextest run -E 'test(vending_machine_holds)'
 ```
 
 Each run writes `/tmp/waterui_dew_vending_performance.toml` with the full work

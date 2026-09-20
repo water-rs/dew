@@ -136,8 +136,8 @@ pub(crate) const fn test_fonts() -> FontSources {
 #[cfg(all(test, not(feature = "system-fonts")))]
 pub(crate) fn test_fonts() -> FontSources {
     FontSources::bundled(&[
-        include_bytes!("../../../testing/fonts/Roboto-Regular.ttf"),
-        include_bytes!("../../../testing/fonts/Roboto-Bold.ttf"),
+        include_bytes!("../test-fonts/Roboto-Regular.ttf"),
+        include_bytes!("../test-fonts/Roboto-Bold.ttf"),
     ])
 }
 

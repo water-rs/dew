@@ -6,7 +6,7 @@ use nami::Signal;
 use nami::watcher::BoxWatcherGuard;
 use waterui_core::Environment;
 use waterui_core::layout::{
-    Point, ProposalSize, Rect as LayoutRect, Size, StretchAxis, ViewDimensions,
+    Point, ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubviewPlacement, ViewDimensions,
 };
 use waterui_layout::scroll::{Axis, ScrollController, ScrollView};
 
@@ -60,14 +60,12 @@ impl DewNode for ScrollNode {
 
     fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
         let viewport = ctx.bounds;
-        let proposal = ProposalSize::new(
-            Some(to_f32(viewport.width())),
-            Some(to_f32(viewport.height())),
-        );
-        let intrinsic = self
-            .child
-            .measure(renderer.state_cell(), content_proposal(self.axis, proposal))
-            .size;
+        // The offer `measure` made to the content, verbatim: the scroll axis
+        // stays unspecified so the content keeps its intrinsic extent, and
+        // the placement below carries it rather than an offer reconstructed
+        // from the viewport the content happens to overfill.
+        let offer = content_proposal(self.axis, ctx.proposal);
+        let intrinsic = self.child.measure(renderer.state_cell(), offer).size;
         let (content_width, content_height) = content_size(self.axis, viewport, intrinsic);
         if let Some(controller) = &self.controller {
             let generation = controller.generation().get();
@@ -90,9 +88,12 @@ impl DewNode for ScrollNode {
         let offset = self.offset.get();
         self.child.render(
             renderer,
-            ctx.child(LayoutRect::new(
-                Point::new(-offset.x, -offset.y),
-                Size::new(content_width, content_height),
+            ctx.child(SubviewPlacement::new(
+                LayoutRect::new(
+                    Point::new(-offset.x, -offset.y),
+                    Size::new(content_width, content_height),
+                ),
+                offer,
             )),
         );
         renderer.list_mut().pop_clip();

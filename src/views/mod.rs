@@ -10,7 +10,7 @@
 //! what measurement uses. Icon payloads are not rendered — dew targets
 //! panels without an OS icon catalog, so labels are text-only here.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use kurbo::{Affine, Rect};
 use nami::Computed;
@@ -78,6 +78,8 @@ pub struct LabelText {
     /// a frame. Behind a `RefCell` because the set is rebuilt from the
     /// content, and measurement runs behind `&self`.
     fonts: RefCell<theme::WatchedFonts>,
+    /// The revision the owning node's `patch` last validated.
+    applied: Cell<TextRevision>,
     cache: RefCell<TextLayoutCache>,
 }
 
@@ -87,14 +89,11 @@ impl LabelText {
     pub fn new(label: &Label, env: &Environment, signals: FrameSignals) -> Self {
         let content =
             WatchedSignal::new(label.semantic_text().resolve(env).content, signals.clone());
+        let fonts = theme::WatchedFonts::styled(&content.get(), content.revision(), env, signals);
         Self {
+            applied: Cell::new(TextRevision::new(content.revision(), fonts.revision())),
             display_mode: label.display_mode_preference(),
-            fonts: RefCell::new(theme::WatchedFonts::styled(
-                &content.get(),
-                content.revision(),
-                env,
-                signals,
-            )),
+            fonts: RefCell::new(fonts),
             content,
             cache: RefCell::new(TextLayoutCache::default()),
         }
@@ -108,6 +107,15 @@ impl LabelText {
         let mut fonts = self.fonts.borrow_mut();
         fonts.sync(content, || self.content.get());
         TextRevision::new(content, fonts.revision())
+    }
+
+    /// Whether anything the label's measurement reads moved since the owning
+    /// node's last `patch`: its content signal or a font slot the current text
+    /// names. The snapshot is refreshed either way, so the question is asked
+    /// exactly once per patch pass.
+    pub(crate) fn measure_invalidated(&self) -> bool {
+        let revision = self.revision();
+        self.applied.replace(revision) != revision
     }
 
     /// Whether this label draws nothing.
@@ -170,7 +178,11 @@ impl LabelText {
         if self.is_hidden() {
             return;
         }
-        let max_width = (rect.width() > 0.0).then(|| to_f32(rect.width()));
+        // The offer `measure` shapes under is `None` — intrinsic, never
+        // wrapped — so the same offer applies here. Keying the layout by the
+        // rect's width instead would shape a second, disagreeing layout for
+        // every width the chrome happens to park the label in.
+        let max_width = None;
         let key = TextLayoutKey { max_width, brush };
         let revision = self.revision();
         let mut cache = self.cache.borrow_mut();
@@ -191,6 +203,54 @@ impl LabelText {
                 .build_styled_layout(&self.content.get(), env, max_width, brush)
         });
         state.borrow_mut().record_layout(outcome);
+    }
+}
+
+/// The watched sizing inputs of a styled text a node measures but keeps no
+/// layout cache for: the revision of the signal it resolves from and the font
+/// slots the current text names.
+///
+/// This is [`LabelText`]'s watcher set without the glyph cache, for texts a
+/// node re-derives every frame — a stepper's formatted value, a field's value
+/// or prompt. The font set is content-dependent, so the watchers are rebuilt
+/// when the source moves, exactly as `LabelText` rebuilds its own.
+pub struct TextSizing {
+    fonts: RefCell<theme::WatchedFonts>,
+    /// `(source revision, font revision)` the owning node's `patch` last
+    /// validated.
+    applied: Cell<(u64, u64)>,
+}
+
+impl TextSizing {
+    /// Watches the font slots `content` names, snapshotting
+    /// `source_revision` — the revision of the signal the text resolves from —
+    /// as the state already measured.
+    pub(crate) fn watch(
+        content: &StyledStr,
+        source_revision: u64,
+        env: &Environment,
+        signals: FrameSignals,
+    ) -> Self {
+        let fonts = theme::WatchedFonts::styled(content, source_revision, env, signals);
+        Self {
+            applied: Cell::new((source_revision, fonts.revision())),
+            fonts: RefCell::new(fonts),
+        }
+    }
+
+    /// Whether anything this text's measurement reads moved since the owning
+    /// node's last `patch`: its source signal or a font slot the current text
+    /// names. `content` supplies the current text for rebuilding the watcher
+    /// set and is sampled only on an actual source change.
+    pub(crate) fn invalidated(
+        &self,
+        source_revision: u64,
+        content: impl FnOnce() -> StyledStr,
+    ) -> bool {
+        let mut fonts = self.fonts.borrow_mut();
+        fonts.sync(source_revision, content);
+        let revision = (source_revision, fonts.revision());
+        self.applied.replace(revision) != revision
     }
 }
 

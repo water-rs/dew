@@ -51,6 +51,9 @@ struct SceneNode {
     /// Set by the content's invalidator, and by content that asked for another
     /// frame; cleared by the rebuild it triggers.
     invalidated: Rc<Cell<bool>>,
+    /// The intrinsic size `patch` last validated — the node's only
+    /// measurement input besides the proposal.
+    measured_intrinsic: Cell<Option<Size>>,
     signals: FrameSignals,
     accessibility_id: NodeId,
 }
@@ -151,6 +154,16 @@ impl DewNode for SceneNode {
     fn stretch_axis(&self) -> StretchAxis {
         scene_stretch_axis(self.content.intrinsic_size())
     }
+
+    fn patch(&mut self, _renderer: &mut DewRenderer) -> bool {
+        // Content may resize itself — a swapped SVG document, a data-driven
+        // canvas — through the same invalidator it uses for repaints, or by
+        // simply answering differently here, so the size input is re-read
+        // rather than trusted to be constant. A repaint that changed nothing
+        // about the intrinsic size invalidates no measurement.
+        let intrinsic = self.content.intrinsic_size();
+        self.measured_intrinsic.replace(intrinsic) != intrinsic
+    }
 }
 
 /// Builds the retained node for a scene view, wiring the content's
@@ -168,6 +181,7 @@ pub fn build(renderer: &mut DewRenderer, scene: SceneView) -> Box<dyn DewNode> {
         }
     })));
     Box::new(SceneNode {
+        measured_intrinsic: Cell::new(content.intrinsic_size()),
         content,
         cached: None,
         invalidated,
