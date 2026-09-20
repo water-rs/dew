@@ -228,7 +228,7 @@ clippy.multiple_crate_versions =  { level = "allow", priority = 1 }
 # forks, and dropping them here would run this repository's render tests
 # through different code than the framework runs.
 [patch.crates-io]
-waterui-image = { git = "https://github.com/water-rs/image", rev = "a1632420ddecde008bde3fe392eee0d9f660d67a" }
+waterui-image = { git = "https://github.com/water-rs/image", rev = "6b3077431d2edccfd6c7d0b4fb45d69bd1d5bc56" }
 xcb = { git = "https://github.com/rust-x-bindings/rust-xcb", rev = "ae3b2cd080e78173223038ccbebdc644eaf4a9ad" }
 vello = { git = "https://github.com/lexoliu/vello", rev = "5e5f538556be16527f67379b105af82f408b747d" }
 vello_hybrid = { git = "https://github.com/lexoliu/vello", rev = "d68d9e9825bcd1ffee762323881c13a2e7a3f639" }
@@ -271,16 +271,16 @@ waterui-url = { git = "https://github.com/water-rs/waterui", rev = "d6807a87c39b
 waterui-video = { git = "https://github.com/water-rs/waterui", rev = "d6807a87c39b2b3f6e992cd9f205f93a2155ed8b" }
 waterui-watcher-set = { git = "https://github.com/water-rs/waterui", rev = "d6807a87c39b2b3f6e992cd9f205f93a2155ed8b" }
 waterui-webview = { git = "https://github.com/water-rs/waterui", rev = "d6807a87c39b2b3f6e992cd9f205f93a2155ed8b" }
-hydrolysis = { git = "https://github.com/water-rs/hydrolysis", rev = "603a8b56722c22e434f6036b4443ff0b12365bce" }
-hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", rev = "6a9981926ba3af16bed33b179365ff2d8a85ed05" }
+hydrolysis = { git = "https://github.com/water-rs/hydrolysis", rev = "71f18452543ea6501de73f003dafb6235f4ba3a7" }
+hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", rev = "38499ef90b0a9e0d3b413fa78350325e88e21044" }
 # Canvas's `dev` head still carries manifest version 0.1.1, which cannot
 # satisfy the `0.1.2` requirement `waterui-testing` and `waterui-internal`
 # declare; the v0.1.2 release commit is the newest revision that keeps the
 # graph on one copy.
-waterui-canvas = { git = "https://github.com/water-rs/canvas", rev = "6ebc84d19347334390192029e8054eafe2ccbac0" }
-waterui-chart = { git = "https://github.com/water-rs/chart", rev = "18778054def976ddffe153bdf841828108e684d4" }
-waterui-math = { git = "https://github.com/water-rs/math", rev = "852a209bee4c9bd1ccdb039b183312dc177e8cd4" }
+waterui-canvas = { git = "https://github.com/water-rs/canvas", rev = "5642e1a330e1ffabb906332bec521819a7fc4af7" }
+waterui-chart = { git = "https://github.com/water-rs/chart", rev = "f133521f27919c300a726b3b89df55dc66231811" }
+waterui-math = { git = "https://github.com/water-rs/math", rev = "eedc603a908ae11e21ad4393a55e86c4cd275658" }
 # The framework itself depends on waterui-svg through a git dep pinned at
 # this rev; patching crates-io to the same rev keeps one `waterui-svg` in the
 # graph. `dev` head adds only CI commits on top of it.
-waterui-svg = { git = "https://github.com/water-rs/svg", rev = "79493d096341faf630e03350f22db73c07bb3b3a" }
+waterui-svg = { git = "https://github.com/water-rs/svg", rev = "12553db2de92e66ff919f56c6dd98ba42f757a00" }
