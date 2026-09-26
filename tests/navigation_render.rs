@@ -8,7 +8,7 @@ use core::cell::Cell;
 use std::rc::Rc;
 
 use kurbo::Rect;
-use nami::binding;
+use nami::{Signal, binding};
 use waterui::Plugin as _;
 use waterui::color::{ResolvedColor, Srgb};
 use waterui::prelude::*;
@@ -199,12 +199,12 @@ fn going_back_restores_the_covered_destination_with_its_state() {
         ))
     });
     tap_labeled(&mut runtime, "Remembered");
-    assert!(observed.get(), "the toggle flips on the root screen");
+    assert!(observed.snapshot(), "the toggle flips on the root screen");
     tap_labeled(&mut runtime, "Open");
     // Back is the leading item of the pushed destination's bar.
     let frame = tap(&mut runtime, 30.0, 14.0).expect("going back renders a frame");
     assert!(
-        observed.get(),
+        observed.snapshot(),
         "the root's state survives being covered and uncovered"
     );
     // The root was retained, not rebuilt: a rebuilt one would have to shape
@@ -519,7 +519,7 @@ fn a_compact_split_navigates_back_to_its_primary() {
 
     tap(&mut runtime, 24.0, 14.0).expect("the contextual back action renders the primary");
     assert_eq!(
-        observed.get(),
+        observed.snapshot(),
         None,
         "back clears the selection that presented the detail"
     );

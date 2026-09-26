@@ -3,7 +3,7 @@
 //! Run with `--no-capture` to export `/tmp/waterui_dew_tabs.png` for visual
 //! review.
 
-use nami::binding;
+use nami::{Signal, binding};
 use waterui::prelude::*;
 use waterui_backend_core::input::TouchPhase;
 use waterui_controls::toggle::toggle;
@@ -140,7 +140,7 @@ fn a_tab_keeps_its_page_across_a_round_trip() {
     runtime.pump().expect("the first frame renders");
 
     tap_labeled(&mut runtime, "Ready");
-    assert!(observed.get(), "the first tab's toggle flips");
+    assert!(observed.snapshot(), "the first tab's toggle flips");
 
     // The tab bar splits the foot of the panel in two.
     tap(&mut runtime, 180.0, 225.0);
@@ -150,7 +150,7 @@ fn a_tab_keeps_its_page_across_a_round_trip() {
     );
     tap(&mut runtime, 60.0, 225.0);
     assert!(
-        observed.get(),
+        observed.snapshot(),
         "the first tab's page is retained, so its state comes back with it"
     );
 }
@@ -182,7 +182,7 @@ fn a_disabled_tab_cannot_be_selected() {
     runtime.pump().expect("the first frame renders");
     tap(&mut runtime, 180.0, 225.0);
     assert_eq!(
-        observed.get(),
+        observed.snapshot(),
         Screen::Now,
         "a disabled tab leaves the selection alone"
     );
@@ -254,12 +254,12 @@ fn sidebar_tabs_select_and_retain_pages() {
     .expect("export sidebar visual review PNG");
 
     tap(&mut runtime, 20.0, 180.0).expect("the second sidebar row selects its page");
-    assert_eq!(observed.get(), Screen::Later);
+    assert_eq!(observed.snapshot(), Screen::Later);
     assert!(
         runtime.pump().is_none(),
         "sidebar selection is instantaneous"
     );
 
     tap(&mut runtime, 20.0, 60.0).expect("the first retained page returns");
-    assert_eq!(observed.get(), Screen::Now);
+    assert_eq!(observed.snapshot(), Screen::Now);
 }

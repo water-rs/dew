@@ -898,7 +898,7 @@ impl SplitNode {
     fn detail_selection(&self) -> Option<Id> {
         self.secondary_binding
             .as_ref()
-            .map_or_else(|| self.primary_binding.get(), Signal::get)
+            .map_or_else(|| self.primary_binding.snapshot(), Signal::snapshot)
     }
 
     fn ensure_content(&mut self, renderer: &mut DewRenderer, selected: Id) {
@@ -940,7 +940,7 @@ impl SplitNode {
     }
 
     fn ensure_selected(&mut self, renderer: &mut DewRenderer) {
-        let primary = self.primary_binding.get();
+        let primary = self.primary_binding.snapshot();
         if self.is_three_column()
             && let Some(selected) = primary
         {
@@ -971,8 +971,8 @@ impl SplitNode {
     }
 
     fn compact_presentation(&self, bounds: Rect) -> SplitPresentation {
-        let primary = self.primary_binding.get();
-        let secondary = self.secondary_binding.as_ref().and_then(Signal::get);
+        let primary = self.primary_binding.snapshot();
+        let secondary = self.secondary_binding.as_ref().and_then(Signal::snapshot);
         if self.is_three_column() {
             if secondary.is_some() {
                 return SplitPresentation {
@@ -1015,7 +1015,7 @@ impl SplitNode {
     }
 
     fn presentation(&self, bounds: Rect) -> SplitPresentation {
-        let primary = self.primary_binding.get();
+        let primary = self.primary_binding.snapshot();
         let detail = self.detail_selection();
         if matches!(
             self.visibility.get(),
@@ -1251,7 +1251,7 @@ impl DewNode for SplitNode {
         self.visibility_revision = visibility_revision;
 
         let mut changed = self.primary.patch(renderer) | self.placeholder.patch(renderer);
-        if let Some(selected) = self.primary_binding.get()
+        if let Some(selected) = self.primary_binding.snapshot()
             && let Some(entry) = self.content.get_mut(&selected)
         {
             changed |= entry.chrome.patch(renderer) | entry.content.patch(renderer);

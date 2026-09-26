@@ -7,7 +7,7 @@
 use core::cell::Cell;
 use std::rc::Rc;
 
-use nami::binding;
+use nami::{Signal, binding};
 use waterui::Plugin as _;
 use waterui::prelude::{Color, text, vstack};
 use waterui::theme::{FontSettings, Theme};
@@ -250,7 +250,7 @@ fn toggle_click_updates_binding() {
 
     click(&mut runtime, 180.0, 24.0);
 
-    assert!(enabled.get());
+    assert!(enabled.snapshot());
 }
 
 #[test]
@@ -268,7 +268,7 @@ fn slider_drag_maps_pointer_to_range() {
     click(&mut runtime, 145.0, 42.0);
 
     assert!(
-        (amount.get() - 75.0).abs() < 0.01,
+        (amount.snapshot() - 75.0).abs() < 0.01,
         "slider should map the track position to its configured range"
     );
 }
@@ -286,10 +286,10 @@ fn stepper_buttons_apply_step_and_range() {
     runtime.pump().expect("initial frame renders");
 
     click(&mut runtime, 186.0, 30.0);
-    assert_eq!(quantity.get(), 5);
+    assert_eq!(quantity.snapshot(), 5);
 
     click(&mut runtime, 150.0, 30.0);
-    assert_eq!(quantity.get(), 3);
+    assert_eq!(quantity.snapshot(), 3);
 }
 
 /// Visual review artifact: a small composed UI.

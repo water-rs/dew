@@ -252,7 +252,7 @@ struct CountingContent {
 impl SceneContent for CountingContent {
     fn build_scene(&mut self, scene: &mut dyn Scene2D, width: f32, height: f32) -> bool {
         self.builds.set(self.builds.get() + 1);
-        let level = self.fill.get();
+        let level = self.fill.snapshot();
         let path = Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).to_path(0.1);
         scene.fill(
             peniko::Fill::NonZero,

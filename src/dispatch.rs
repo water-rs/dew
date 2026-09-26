@@ -1108,7 +1108,7 @@ impl LazyContainerNode {
         // bookkeeping and allocation than the rows it avoids building, and this
         // backend is budgeted on exactly that. Rendering nothing, which is what
         // an unhandled `LazyContainer` did before, is not the cheaper option.
-        let count = contents.len().get();
+        let count = contents.len().snapshot();
         let children = (0..count)
             .map(|index| build_node(renderer, materialize(&contents, index), env, depth + 1))
             .collect();
@@ -1651,7 +1651,7 @@ impl<S: Signal> WatchedSignal<S> {
     }
 
     pub(crate) fn get(&self) -> S::Output {
-        self.signal.get()
+        self.signal.snapshot()
     }
 
     pub(crate) const fn signal(&self) -> &S {

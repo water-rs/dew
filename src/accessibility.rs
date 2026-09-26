@@ -323,7 +323,7 @@ impl AccessibilityBuilder {
             },
             ActionTarget::Toggle(binding) => match request.action {
                 Action::Click => {
-                    binding.set(!binding.get());
+                    binding.set(!binding.snapshot());
                     true
                 }
                 action => panic!("dew toggle accessibility target does not support {action:?}"),
@@ -336,7 +336,7 @@ impl AccessibilityBuilder {
             }
             ActionTarget::Select { selection, value } => match request.action {
                 Action::Click => {
-                    if selection.get() == value {
+                    if selection.snapshot() == value {
                         false
                     } else {
                         selection.set(value);
@@ -373,7 +373,7 @@ fn numeric_f64_action(
     );
     let start = *range.start();
     let end = *range.end();
-    let previous = binding.get().clamp(start, end);
+    let previous = binding.snapshot().clamp(start, end);
     let next = match action {
         Action::Increment => (previous + step).min(end),
         Action::Decrement => (previous - step).max(start),
@@ -397,14 +397,14 @@ fn numeric_i32_action(
     action: Action,
     data: Option<&ActionData>,
 ) -> bool {
-    let step = step.get();
+    let step = step.snapshot();
     assert!(
         step > 0,
         "dew accessibility stepper requires a positive step"
     );
     let start = *range.start();
     let end = *range.end();
-    let previous = binding.get().clamp(start, end);
+    let previous = binding.snapshot().clamp(start, end);
     let next = match action {
         Action::Increment => previous.saturating_add(step).min(end),
         Action::Decrement => previous.saturating_sub(step).max(start),

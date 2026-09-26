@@ -417,7 +417,7 @@ impl DewState {
         brush: peniko::Color,
     ) -> parley::Layout<[u8; 4]> {
         self.assert_has_fonts();
-        let font = Font::default().resolve(env).get();
+        let font = Font::default().resolve(env).snapshot();
         let Self {
             fonts, layout_cx, ..
         } = self;
@@ -458,7 +458,7 @@ impl DewState {
         }
         self.assert_has_fonts();
 
-        let default_font = Font::default().resolve(env).get();
+        let default_font = Font::default().resolve(env).snapshot();
         let Self {
             fonts, layout_cx, ..
         } = self;
@@ -521,7 +521,7 @@ fn push_span_style(
     env: &Environment,
     range: core::ops::Range<usize>,
 ) {
-    let font: ResolvedFont = style.font.resolve(env).get();
+    let font: ResolvedFont = style.font.resolve(env).snapshot();
     builder.push(parley::StyleProperty::FontSize(font.size), range.clone());
     builder.push(
         parley::StyleProperty::FontWeight(parley_font_weight(font.weight)),
@@ -550,7 +550,7 @@ fn push_span_style(
         range.clone(),
     );
     if let Some(color) = &style.foreground {
-        let resolved: ResolvedColor = color.resolve(env).get();
+        let resolved: ResolvedColor = color.resolve(env).snapshot();
         builder.push(
             parley::StyleProperty::Brush(resolved_color_to_rgba8(&resolved)),
             range,

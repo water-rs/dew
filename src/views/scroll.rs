@@ -68,9 +68,9 @@ impl DewNode for ScrollNode {
         let intrinsic = self.child.measure(renderer.state_cell(), offer).size;
         let (content_width, content_height) = content_size(self.axis, viewport, intrinsic);
         if let Some(controller) = &self.controller {
-            let generation = controller.generation().get();
+            let generation = controller.generation().snapshot();
             if generation != self.applied_scroll_generation.get() {
-                let target = controller.target().get();
+                let target = controller.target().snapshot();
                 let max_x = (content_width - to_f32(viewport.width())).max(0.0);
                 let max_y = (content_height - to_f32(viewport.height())).max(0.0);
                 let offset = match self.axis {

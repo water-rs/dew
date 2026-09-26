@@ -4,7 +4,7 @@ use core::cell::Cell;
 use std::rc::Rc;
 
 use accesskit::{Action, ActionRequest, Role, TreeId};
-use nami::{SignalExt as _, binding};
+use nami::{Signal, SignalExt as _, binding};
 use waterui::prelude::Color;
 use waterui::view::ViewExt as _;
 use waterui_controls::button::button;
@@ -125,7 +125,7 @@ fn tabs_publish_selection_and_accessibility_click_selects_a_page() {
     runtime
         .pump()
         .expect("selecting a tab through accessibility renders its page");
-    assert_eq!(observed.get(), Screen::Later);
+    assert_eq!(observed.snapshot(), Screen::Later);
     let later = runtime
         .board()
         .accessibility_tree()
