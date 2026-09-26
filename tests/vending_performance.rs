@@ -20,7 +20,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant as StdInstant};
 
-use nami::{Binding, binding};
+use nami::{Binding, Signal, binding};
 use peniko::Blob;
 use vello_cpu::{Level, RasterizerSettings, RenderMode, RenderSettings};
 use waterui::prelude::*;
@@ -764,8 +764,8 @@ fn vending_product_selection_updates_order() {
         .pump()
         .expect("product selection must render the retained update");
 
-    assert_eq!(state.selected_product.get(), "Sparkling Lime");
-    assert_eq!(state.total_cents.get(), 175);
+    assert_eq!(state.selected_product.snapshot(), "Sparkling Lime");
+    assert_eq!(state.total_cents.snapshot(), 175);
 }
 
 /// The panel bus alone caps full-screen repaints well below 60 FPS, which is

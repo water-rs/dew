@@ -182,8 +182,8 @@ fn measure(
     env: &Environment,
 ) -> Size {
     let label = label.measure(state, env);
-    let value = config.value.get();
-    let prompt = config.prompt.content.get();
+    let value = config.value.snapshot();
+    let prompt = config.prompt.content.snapshot();
     let (value_width, value_height) = state.borrow_mut().measure_styled(&value, env, None);
     let (prompt_width, prompt_height) = state.borrow_mut().measure_styled(&prompt, env, None);
 

@@ -273,7 +273,7 @@ impl core::fmt::Debug for WatchedFonts {
 }
 
 pub(crate) fn foreground(env: &Environment) -> Color {
-    installed::<ForegroundColor>(env).map_or(FOREGROUND, |signal| color(signal.get()))
+    installed::<ForegroundColor>(env).map_or(FOREGROUND, |signal| color(signal.snapshot()))
 }
 
 fn resolved(color: Color) -> ResolvedColor {

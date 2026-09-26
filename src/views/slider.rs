@@ -57,7 +57,7 @@ struct SliderTrackGeometry {
 
 impl SliderPointer {
     fn update(&self, point: kurbo::Point) -> bool {
-        if self.disabled.get() {
+        if self.disabled.snapshot() {
             return false;
         }
         let track = self.track.get();
@@ -69,7 +69,7 @@ impl SliderPointer {
         let end = *self.range.end();
         let progress = ((point.x - track.x0) / track.width()).clamp(0.0, 1.0);
         let next = (end - start).mul_add(progress, start);
-        if self.value.get().to_bits() == next.to_bits() {
+        if self.value.snapshot().to_bits() == next.to_bits() {
             return false;
         }
         self.value.set(next);

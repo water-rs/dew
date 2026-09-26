@@ -36,8 +36,8 @@ const BUTTON_BORDER: f64 = 1.0;
 /// The intrinsic value text for measurement, without subscribing.
 fn value_text_for_measure(config: &StepperConfig) -> StyledStr {
     config.value_formatter.as_ref().map_or_else(
-        || StyledStr::plain(config.value.get().to_string()),
-        Signal::get,
+        || StyledStr::plain(config.value.snapshot().to_string()),
+        Signal::snapshot,
     )
 }
 
@@ -89,9 +89,9 @@ impl PointerHandler for StepperPointer {
         if !core::mem::take(&mut self.armed) || !bounds.contains(point) {
             return false;
         }
-        let step = self.step.get();
+        let step = self.step.snapshot();
         assert!(step > 0, "dew stepper requires a positive step");
-        let current = self.value.get();
+        let current = self.value.snapshot();
         let next = current
             .saturating_add(step.saturating_mul(self.direction))
             .clamp(*self.range.start(), *self.range.end());
@@ -348,7 +348,7 @@ fn measure(
         "dew stepper requires an ordered range"
     );
     assert!(
-        config.step.get() > 0,
+        config.step.snapshot() > 0,
         "dew stepper requires a positive step"
     );
     let label = label.measure(state, env);

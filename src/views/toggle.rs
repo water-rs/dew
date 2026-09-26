@@ -53,15 +53,15 @@ struct TogglePointer {
 
 impl PointerHandler for TogglePointer {
     fn pointer_down(&mut self, _point: kurbo::Point, _bounds: Rect) -> bool {
-        self.armed = !self.disabled.get();
+        self.armed = !self.disabled.snapshot();
         false
     }
 
     fn pointer_up(&mut self, point: kurbo::Point, bounds: Rect) -> bool {
         let activate =
-            core::mem::take(&mut self.armed) && bounds.contains(point) && !self.disabled.get();
+            core::mem::take(&mut self.armed) && bounds.contains(point) && !self.disabled.snapshot();
         if activate {
-            self.toggle.set(!self.toggle.get());
+            self.toggle.set(!self.toggle.snapshot());
         }
         activate
     }

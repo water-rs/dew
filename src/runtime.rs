@@ -254,7 +254,7 @@ mod tests {
     use crate::display_list::DisplayList;
     use core::cell::Cell;
     use kurbo::Affine;
-    use nami::{Binding, binding};
+    use nami::{Binding, Signal, binding};
     use peniko::Color;
     use std::rc::Rc;
     use waterui_backend_core::input::TouchPhase;
@@ -429,11 +429,14 @@ mod tests {
         });
 
         runtime.pump().expect("initial frame must render");
-        assert!(!value.get(), "initial rendering must not discard input");
+        assert!(
+            !value.snapshot(),
+            "initial rendering must not discard input"
+        );
         runtime
             .pump()
             .expect("queued input must render after hit targets exist");
-        assert!(value.get());
+        assert!(value.snapshot());
     }
 
     #[test]

@@ -12,7 +12,7 @@
 //! its renderer — there is no shortcut that skips the pointer plumbing being
 //! tested. State is observed through `Binding`s the handlers write.
 
-use nami::{Binding, binding};
+use nami::{Binding, Signal, binding};
 use waterui::prelude::{Color, vstack};
 use waterui_backend_core::input::TouchPhase;
 use waterui_chart::{DataPoint, HitResult, LineChart};
@@ -90,7 +90,11 @@ fn hover_metadata_reports_enter_move_and_exit() {
     runtime
         .pump()
         .expect("the initial frame must render the hover-wrapped tree");
-    assert_eq!(entered.get(), 0, "rendering alone must not fire a hover");
+    assert_eq!(
+        entered.snapshot(),
+        0,
+        "rendering alone must not fire a hover"
+    );
 
     // Into the top half: enter and move both fire, and the move location is
     // local to the hovered view, whose origin is the window origin here.
@@ -98,9 +102,9 @@ fn hover_metadata_reports_enter_move_and_exit() {
     runtime
         .pump()
         .expect("a hover enter must refresh the frame it may have changed");
-    assert_eq!(entered.get(), 1);
-    assert_eq!(exited.get(), 0);
-    assert_eq!(last_move.get(), Some((40.0, 20.0)));
+    assert_eq!(entered.snapshot(), 1);
+    assert_eq!(exited.snapshot(), 0);
+    assert_eq!(last_move.snapshot(), Some((40.0, 20.0)));
 
     // Still inside: the move handler runs again, and because nothing in the
     // tree observes what it wrote, no frame is spent. That is the whole point
@@ -110,16 +114,16 @@ fn hover_metadata_reports_enter_move_and_exit() {
         runtime.pump().is_none(),
         "a hover move that changes nothing must not cost a frame"
     );
-    assert_eq!(entered.get(), 1, "staying inside must not re-enter");
-    assert_eq!(last_move.get(), Some((60.0, 30.0)));
+    assert_eq!(entered.snapshot(), 1, "staying inside must not re-enter");
+    assert_eq!(last_move.snapshot(), Some((60.0, 30.0)));
 
     // Into the bottom half: outside the hovered view, so it exits.
     send(&mut runtime, 60.0, 100.0, TouchPhase::Moved);
     runtime
         .pump()
         .expect("a hover exit must refresh the frame it may have changed");
-    assert_eq!(exited.get(), 1);
-    assert_eq!(entered.get(), 1);
+    assert_eq!(exited.snapshot(), 1);
+    assert_eq!(entered.snapshot(), 1);
 }
 
 /// A cancelled pointer sequence is the pointer being gone rather than
@@ -144,13 +148,13 @@ fn cancelled_pointer_exits_hovered_targets() {
     runtime.pump().expect("the initial frame must render");
     send(&mut runtime, 50.0, 50.0, TouchPhase::Moved);
     runtime.pump().expect("hover enter refreshes");
-    assert_eq!(exited.get(), 0);
+    assert_eq!(exited.snapshot(), 0);
 
     send(&mut runtime, 50.0, 50.0, TouchPhase::Cancelled);
     runtime
         .pump()
         .expect("a cancelled pointer must refresh the frame its exit may have changed");
-    assert_eq!(exited.get(), 1);
+    assert_eq!(exited.snapshot(), 1);
 }
 
 /// A tap observer must recognize a press/release pair and receive the
@@ -176,14 +180,18 @@ fn tap_gesture_metadata_recognizes_a_press_and_release() {
     runtime
         .pump()
         .expect("the initial frame must render the gesture-wrapped tree");
-    assert_eq!(taps.get(), None, "rendering alone must not fire a gesture");
+    assert_eq!(
+        taps.snapshot(),
+        None,
+        "rendering alone must not fire a gesture"
+    );
 
     send(&mut runtime, 80.0, 40.0, TouchPhase::Started);
     send(&mut runtime, 80.0, 40.0, TouchPhase::Ended);
     runtime
         .pump()
         .expect("a recognized tap must refresh the frame its action may have changed");
-    assert_eq!(taps.get(), Some((80.0, 40.0, 1)));
+    assert_eq!(taps.snapshot(), Some((80.0, 40.0, 1)));
 }
 
 /// A drag observer must see the whole sequence, not just its end: an
@@ -230,7 +238,7 @@ fn drag_gesture_metadata_reports_every_phase() {
         .expect("a recognized drag must refresh the frame its action may have changed");
 
     assert_eq!(
-        phases.get(),
+        phases.snapshot(),
         vec![
             GesturePhase::Started,
             GesturePhase::Updated,
@@ -239,7 +247,7 @@ fn drag_gesture_metadata_reports_every_phase() {
     );
     // The pointer travelled further than the tap tolerance, so the stacked tap
     // observer correctly failed rather than firing alongside the drag.
-    assert_eq!(taps.get(), 0);
+    assert_eq!(taps.snapshot(), 0);
 }
 
 /// The pre-#180 behaviour, stated directly: a view carrying interaction
@@ -333,7 +341,7 @@ fn line_chart_hover_and_tap_drive_selection_on_dew() {
     runtime
         .pump()
         .expect("the initial frame must render an interactive chart");
-    assert!(focused.get().is_none());
+    assert!(focused.snapshot().is_none());
 
     // Sweep the top half — the chart's own share of the stack — until its hit
     // testing resolves a datum, and remember where that was so the tap below
@@ -342,7 +350,7 @@ fn line_chart_hover_and_tap_drive_selection_on_dew() {
         let x = f64::from(step) * f64::from(WIDTH) / 10.0;
         send(&mut runtime, x, HOVER_Y, TouchPhase::Moved);
         let _ = runtime.pump();
-        focused.get().map(|hit| (x, hit))
+        focused.snapshot().map(|hit| (x, hit))
     });
     let (hit_x, hovered) = hovered.expect("hovering the chart must focus one of its points");
     assert_eq!(hovered.series, 0);
@@ -352,7 +360,7 @@ fn line_chart_hover_and_tap_drive_selection_on_dew() {
     send(&mut runtime, hit_x, 110.0, TouchPhase::Moved);
     let _ = runtime.pump();
     assert!(
-        focused.get().is_none(),
+        focused.snapshot().is_none(),
         "leaving the chart must clear its focus"
     );
 
@@ -362,7 +370,7 @@ fn line_chart_hover_and_tap_drive_selection_on_dew() {
     send(&mut runtime, hit_x, HOVER_Y, TouchPhase::Ended);
     let _ = runtime.pump();
     let selected_hit = selected
-        .get()
+        .snapshot()
         .expect("tapping the chart must select one of its points");
     assert_eq!(selected_hit.series, hovered.series);
     assert_eq!(selected_hit.index, hovered.index);

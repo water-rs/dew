@@ -92,14 +92,14 @@ struct TabPointer {
 
 impl PointerHandler for TabPointer {
     fn pointer_down(&mut self, _point: kurbo::Point, _bounds: kurbo::Rect) -> bool {
-        self.armed = self.enabled.get();
+        self.armed = self.enabled.snapshot();
         false
     }
 
     fn pointer_up(&mut self, point: kurbo::Point, bounds: kurbo::Rect) -> bool {
         let select =
-            core::mem::take(&mut self.armed) && bounds.contains(point) && self.enabled.get();
-        if select && self.selection.get() != self.id {
+            core::mem::take(&mut self.armed) && bounds.contains(point) && self.enabled.snapshot();
+        if select && self.selection.snapshot() != self.id {
             self.selection.set(self.id);
             return true;
         }
