@@ -35,7 +35,7 @@ use waterui_backend_core::gesture::{GestureEngine, GestureTarget};
 use waterui_backend_core::input::TouchPhase;
 use waterui_backend_core::time::Instant;
 use waterui_core::event::{Event, HoverEvent, OnEvent};
-use waterui_core::gesture::{Gesture, GestureObserver};
+use waterui_core::gesture::{Gesture, GestureObserver, PointerButton};
 use waterui_core::handler::BoxedAction;
 use waterui_core::layout::{ProposalSize, StretchAxis, ViewDimensions};
 use waterui_core::{AnyView, Environment};
@@ -119,7 +119,10 @@ impl InteractionRouter {
             TouchPhase::Started => {
                 self.pointer = Some(point);
                 let hovered = self.sync_hover(point, env);
-                hovered | self.gestures.handle_pointer_down(point, now, env)
+                hovered
+                    | self
+                        .gestures
+                        .handle_pointer_down(point, now, PointerButton::Primary, env)
             }
             // Moves arrive whether or not a button is held: an unpressed move
             // is a hover, a pressed one additionally drives the drag
@@ -128,11 +131,15 @@ impl InteractionRouter {
             TouchPhase::Moved => {
                 self.pointer = Some(point);
                 let hovered = self.sync_hover(point, env);
-                hovered | self.gestures.handle_pointer_move(point, now, env)
+                hovered
+                    | self
+                        .gestures
+                        .handle_pointer_move(point, now, PointerButton::Primary, env)
             }
             TouchPhase::Ended => {
                 self.pointer = Some(point);
-                self.gestures.handle_pointer_up(point, now, env)
+                self.gestures
+                    .handle_pointer_up(point, now, PointerButton::Primary, env)
             }
             // The pointer is gone rather than elsewhere, so every hovered
             // target exits and every in-flight recognizer fails.
