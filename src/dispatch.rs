@@ -1123,7 +1123,7 @@ impl LazyContainerNode {
         let watch = contents.watch(.., {
             let pending = Rc::clone(&pending);
             let signals = renderer.signals();
-            move |context| {
+            move |context, _change| {
                 *pending.borrow_mut() = Some(context.into_value().to_vec());
                 signals.request_refresh();
             }
