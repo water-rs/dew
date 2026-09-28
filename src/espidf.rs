@@ -134,9 +134,7 @@ pub fn run(app: App, panel: PanelConfig, fonts: &'static [&'static [u8]]) -> ! {
     // The panel is the application's one window and the firmware never
     // returns, so the last-window policy has nothing to decide here.
     let AppParts {
-        mut windows,
-        env,
-        ..
+        mut windows, env, ..
     } = app.into_parts();
     assert!(
         !windows.is_empty(),
