@@ -8,7 +8,7 @@ use waterui_core::Environment;
 use waterui_core::layout::{
     Point, ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubviewPlacement, ViewDimensions,
 };
-use waterui_layout::scroll::{Axis, ScrollController, ScrollView};
+use waterui_layout::scroll::{Axis, ScrollController, ScrollView, ScrollViewParts};
 
 use crate::dispatch::{DewNode, DewRenderer, RenderContext, build_node};
 use crate::text::DewState;
@@ -29,7 +29,12 @@ pub fn build(
     env: &Environment,
     depth: usize,
 ) -> Box<dyn DewNode> {
-    let (axis, content, controller) = scroll.into_inner();
+    let ScrollViewParts {
+        axis,
+        content,
+        controller,
+        ..
+    } = scroll.into_inner();
     let controller_guard = controller.as_ref().map(|controller| {
         let signals = renderer.signals();
         controller.generation().watch(move |_| {
