@@ -12,7 +12,7 @@
 
 use std::time::Instant;
 
-use waterui::app::App;
+use waterui::app::{App, AppParts};
 
 use crate::board::{Board, FontSources};
 use crate::compositor::DeviceRegion;
@@ -101,7 +101,7 @@ impl PanelConfig {
     }
 }
 
-/// Boots `app` and drives its main window on this chip forever.
+/// Boots `app` and drives its first window on this chip forever.
 ///
 /// Installs the main-thread executors that reactive `WaterUI` tasks
 /// (`text!`, `Binding`/`Computed` watchers) require.
@@ -118,7 +118,7 @@ pub fn init_executors() {
 
 /// # Panics
 ///
-/// Panics when the app defines no main window — embedded targets render
+/// Panics when the app declares no window — embedded targets render
 /// exactly one window.
 ///
 /// `fonts` are the TTF/OTF binaries text shapes with (typically
@@ -131,10 +131,17 @@ pub fn run(app: App, panel: PanelConfig, fonts: &'static [&'static [u8]]) -> ! {
     esp_idf_svc::log::EspLogger::initialize_default();
     init_executors();
 
-    let (mut windows, _menu_bar, env) = app.into_parts();
+    // The panel is the application's one window and the firmware never
+    // returns, so the last-window policy has nothing to decide here.
+    let AppParts {
+        mut windows,
+        env,
+        ..
+    } = app.into_parts();
     assert!(
         !windows.is_empty(),
-        "embedded WaterUI apps must define a main window"
+        "embedded WaterUI apps must declare a window: the panel shows the first one, and firmware \
+         has no windowless state"
     );
     let content = windows.remove(0).content;
 
