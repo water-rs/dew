@@ -27,8 +27,11 @@ use waterui_canvas::Canvas;
 use waterui_core::AnyView;
 use waterui_core::layout::{Point, Rect as LayoutRect, Size};
 use waterui_dew::{ClipRegion, DewRuntime, DisplayList, DrawCommand, HostBoard, render_view_png};
+use waterui_graphics::cherenkov::{Draw, Recorder, WorkingColor};
 use waterui_graphics::color::Srgb;
-use waterui_graphics::{Scene2D, SceneContent, SceneInvalidator, SceneView, invalidate_on_change};
+use waterui_graphics::{
+    RecordingResources, SceneContent, SceneInvalidator, SceneView, invalidate_on_change,
+};
 use waterui_layout::scroll::ScrollView;
 use waterui_math::ast::MathStyle;
 use waterui_math::view::Math;
@@ -250,22 +253,28 @@ struct CountingContent {
 }
 
 impl SceneContent for CountingContent {
-    fn build_scene(&mut self, scene: &mut dyn Scene2D, width: f32, height: f32) -> bool {
+    fn build_scene(
+        &mut self,
+        recorder: &mut Recorder,
+        _resources: &mut RecordingResources<'_>,
+        width: f32,
+        height: f32,
+    ) -> bool {
         self.builds.set(self.builds.get() + 1);
-        let level = self.fill.snapshot();
-        let path = Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).to_path(0.1);
-        scene.fill(
-            peniko::Fill::NonZero,
-            Affine::IDENTITY,
-            &peniko::Color::from_rgba8(level, level, level, 255).into(),
-            None,
-            &path,
+        let level = f32::from(self.fill.snapshot()) / 255.0;
+        recorder.fill(
+            Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).to_path(0.1),
+            WorkingColor::new([level, level, level, 1.0]),
         );
         self.animated
     }
 
     fn set_invalidator(&mut self, invalidator: Option<SceneInvalidator>) {
         self.guard = invalidator.map(|invalidator| invalidate_on_change(&invalidator, &self.fill));
+    }
+
+    fn rebuild_for_engine(&mut self) {
+        self.guard = None;
     }
 }
 
@@ -377,16 +386,25 @@ fn animated_content_keeps_asking_for_frames() {
 struct NaturallySizedContent;
 
 impl SceneContent for NaturallySizedContent {
-    fn build_scene(&mut self, scene: &mut dyn Scene2D, width: f32, height: f32) -> bool {
-        let path = Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).to_path(0.1);
-        let brush: peniko::Brush = peniko::Color::new([0.0, 0.4, 1.0, 1.0]).into();
-        scene.fill(peniko::Fill::NonZero, Affine::IDENTITY, &brush, None, &path);
+    fn build_scene(
+        &mut self,
+        recorder: &mut Recorder,
+        _resources: &mut RecordingResources<'_>,
+        width: f32,
+        height: f32,
+    ) -> bool {
+        recorder.fill(
+            Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).to_path(0.1),
+            WorkingColor::new([0.0, 0.4, 1.0, 1.0]),
+        );
         false
     }
 
     fn intrinsic_size(&self) -> Option<Size> {
         Some(Size::new(100.0, 200.0))
     }
+
+    fn rebuild_for_engine(&mut self) {}
 }
 
 /// The one scene command in a list that also carries a scroll view's chrome.

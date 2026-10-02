@@ -22,7 +22,8 @@ use waterui_core::id::SelfId;
 use waterui_core::layout::{ProposalSize, Size};
 use waterui_core::plugin::Plugin;
 use waterui_core::{AnyView, Environment};
-use waterui_graphics::{Scene2D, SceneContent, SceneInvalidator, SceneView};
+use waterui_graphics::cherenkov::Recorder;
+use waterui_graphics::{RecordingResources, SceneContent, SceneInvalidator, SceneView};
 use waterui_layout::frame::Frame;
 use waterui_layout::spacer;
 use waterui_layout::stack::{VStack, hstack, vstack};
@@ -463,12 +464,22 @@ fn scene_content_resize_invalidates_its_measure() {
     }
 
     impl SceneContent for TestContent {
-        fn build_scene(&mut self, _scene: &mut dyn Scene2D, _width: f32, _height: f32) -> bool {
+        fn build_scene(
+            &mut self,
+            _recorder: &mut Recorder,
+            _resources: &mut RecordingResources<'_>,
+            _width: f32,
+            _height: f32,
+        ) -> bool {
             false
         }
 
         fn set_invalidator(&mut self, invalidator: Option<SceneInvalidator>) {
             *self.invalidator.borrow_mut() = invalidator;
+        }
+
+        fn rebuild_for_engine(&mut self) {
+            *self.invalidator.borrow_mut() = None;
         }
 
         fn intrinsic_size(&self) -> Option<Size> {
