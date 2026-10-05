@@ -395,6 +395,6 @@ mod tests {
     #[test]
     fn clean_frame_schedules_nothing() {
         let scheduler = BandScheduler::new(320, 240, 16);
-        assert!(scheduler.schedule(&[]).is_empty());
+        assert_eq!(scheduler.schedule(&[]), Vec::new());
     }
 }

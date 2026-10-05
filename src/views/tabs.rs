@@ -552,7 +552,7 @@ impl TabsNode {
         let selected = self.selection.get();
         for (index, (item, layout)) in self.items.iter_mut().zip(layouts).enumerate() {
             let index = u32::try_from(index).expect("a dew tab index must fit in u32");
-            let x = bar.x0 + slot_width * f64::from(index);
+            let x = slot_width.mul_add(f64::from(index), bar.x0);
             let slot = kurbo::Rect::new(x, bar.y0 + HAIRLINE, x + slot_width, bar.y1);
             item.render_tab_bar(renderer, ctx, slot, layout, item.id == selected);
         }
@@ -606,7 +606,7 @@ impl TabsNode {
         let selected = self.selection.get();
         for (index, (item, layout)) in self.items.iter_mut().zip(layouts).enumerate() {
             let index = u32::try_from(index).expect("a dew tab index must fit in u32");
-            let y = sidebar.y0 + slot_height * f64::from(index);
+            let y = slot_height.mul_add(f64::from(index), sidebar.y0);
             let slot = kurbo::Rect::new(sidebar.x0, y, sidebar.x1 - HAIRLINE, y + slot_height);
             item.render_sidebar(renderer, ctx, slot, layout, item.id == selected);
         }

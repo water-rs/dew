@@ -163,7 +163,7 @@ fn navigation_publishes_a_group_with_its_visible_title() {
         .iter()
         .find_map(|(_, node)| (node.role() == Role::Navigation).then_some(node))
         .expect("the visible destination is a navigation group");
-    assert!(!navigation.children().is_empty());
+    assert_ne!(navigation.children(), Vec::new());
     assert!(
         update
             .nodes
