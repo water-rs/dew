@@ -297,7 +297,7 @@ mod tests {
             .pump()
             .expect("binding refresh must render the retained tree");
 
-        assert!(!frame.dirty.is_empty());
+        assert_ne!(frame.dirty, Vec::new());
         assert_eq!(body_calls.get(), 1, "refresh must not evaluate body again");
     }
 
@@ -467,7 +467,7 @@ mod tests {
             diff_dirty(&old, &new),
             vec![Rect::new(10.0, 10.0, 20.0, 20.0)]
         );
-        assert!(diff_dirty(&old, &old.clone()).is_empty());
+        assert_eq!(diff_dirty(&old, &old.clone()), Vec::new());
     }
 
     #[test]
