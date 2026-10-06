@@ -1,0 +1,6 @@
+# The framework's Apple floor: cherenkov-gpu, reached on Apple hosts through
+# the scene-content test crates, requires macOS/iOS 26 APIs and refuses an
+# older deployment target in its build script.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "26.0"
+IPHONEOS_DEPLOYMENT_TARGET = "26.0"

@@ -52,6 +52,49 @@ axes, indeterminate progress): each panic is an authored "not implemented
 here" marker for a feature that needs a real Dew implementation, never a
 silent degradation.
 
+### Scenes: recorded content on the band renderer
+
+`Canvas` drawings and SVG documents reach Dew as `cherenkov_record` command
+lists and replay band by band into vello_cpu — no offscreen surface, no
+readback, no bitmap copy. The parts of the recording vocabulary with no
+banded analogue fail fast when the scene is recorded, with a panic that names
+the scene:
+
+- mesh and shader paints (`Paint::Mesh`, `Paint::Shader`)
+- gradient and image-pattern `Extend::None` (`Pad`/`Reflect`/`Repeat` do
+  map onto vello's)
+- filter chains (`Group::filter`)
+- shadows on `Line` shapes — a line has no silhouette to offset
+
+A shadow's offset takes the linear part of the ambient transform. Spread
+matches cherenkov-cpu's lowering exactly for paths whose every edge
+bounds coverage: under an axis-aligned transform `Rect`, `RoundedRect`
+and `Circle` take the closed form — the transformed box inflated by
+`spread * smax` per axis, corners `radius * smax`, spread zero included —
+and every other shape, and the rect family under any other transform,
+draws the fill plus a round-joined stroke `2 * |spread|` wide
+*in content space*, which the transform maps to cherenkov's device-space
+dilation ellipse (`DestOut` for a negative spread). Honest divergences:
+an edge that bounds no coverage (a path of only `M L`) is still dilated
+where cherenkov draws nothing — the fix is a path-boolean union of the
+silhouette's outline before the stroke pass, tracked separately; on the
+silhouette branch cherenkov blurs each transform axis at
+`sigma * |axis|` while dew feeds `sigma * smax`, differing under
+non-uniform scale or skew (the closed form is isotropic in cherenkov
+too); and a negative spread on a self-overlapping non-zero path erodes
+along the interior edges too, where cherenkov erodes only the union's
+outline — `vello_common` declares `FilterPrimitive::Morphology`, but
+`PreparedFilter::new` hits `unimplemented!` on it (and on any
+multi-primitive graph), and its single radius is SVG's square kernel,
+not the disc cherenkov's `spread_taps` uses, so no vello primitive can
+erode the union's coverage; the same separately tracked union fix
+covers it.
+
+Known asymmetry: groups record `blend_space: Linear`, but vello_cpu composites
+in sRGB, so Dew maps both blend spaces to sRGB. White at half opacity over
+black lands near 128 on Dew where cherenkov's linear pipeline gives ~188 —
+same recording, deliberately different compositing space.
+
 ## Embedded-device simulator
 
 The complete embedded rendering flow runs natively in a window — no

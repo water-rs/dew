@@ -10,7 +10,7 @@ use std::rc::Rc;
 use kurbo::Rect;
 use nami::{Signal, binding};
 use waterui::Plugin as _;
-use waterui::color::{ResolvedColor, Srgb};
+use waterui::color::Srgb;
 use waterui::prelude::*;
 use waterui::theme::{ColorSettings, Theme};
 use waterui_backend_core::input::TouchPhase;
@@ -131,7 +131,7 @@ fn a_stack_draws_its_root_under_a_bar() {
 /// theme signal without rebuilding its view tree.
 #[test]
 fn root_background_tracks_the_dynamic_theme() {
-    let background = binding(ResolvedColor::from_srgb(Srgb::new(1.0, 0.0, 0.0)));
+    let background = binding(Srgb::new(1.0, 0.0, 0.0).resolve());
     let mut environment = support::test_environment();
     Theme::new()
         .colors(ColorSettings::new().background(background.clone()))
@@ -146,7 +146,7 @@ fn root_background_tracks_the_dynamic_theme() {
         [255, 0, 0, 255]
     );
 
-    background.set(ResolvedColor::from_srgb(Srgb::new(0.0, 0.0, 1.0)));
+    background.set(Srgb::new(0.0, 0.0, 1.0).resolve());
     runtime
         .pump()
         .expect("changing the background signal renders one new frame");

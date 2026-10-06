@@ -21,9 +21,9 @@
 //! - [`compositor`]: dirty-region tracking and band scheduling — decides
 //!   which device-pixel regions must be re-rasterized this frame
 //! - [`painter`]: the `vello_cpu` bridge — rasterizes a display list into a
-//!   region-sized scratch pixmap, and implements `waterui-graphics`'
-//!   engine-neutral `Scene2D` over it, which is what lets `Canvas` drawings
-//!   and SVG documents render here with no engine of their own
+//!   region-sized scratch pixmap; recorded scene content (`Canvas` drawings,
+//!   SVG documents) replays its `cherenkov_record` command list through the
+//!   same path, band by band, with no engine or surface of its own
 //! - [`display`]: the flush boundary — where rasterized regions leave the
 //!   renderer toward a concrete screen (in-memory buffer on desktop,
 //!   RGB565 LCD stream on embedded targets)
@@ -44,9 +44,9 @@
 //! feature awaiting a real Dew implementation, never a silent degradation.
 //!
 //! Self-drawn *scene* content is the deliberate exception, and not a GPU
-//! primitive at all: a `SceneView` draws through the engine-neutral `Scene2D`
-//! contract, so dew installs `SceneViewMergeToParent` and draws it on the CPU
-//! rather than letting it fall back to a GPU surface.
+//! primitive at all: a `SceneView` draws through the cherenkov recording
+//! contract, so dew installs `SceneViewMergeToParent` and rasterizes it on
+//! the CPU rather than letting it fall back to a GPU surface.
 //!
 //! # Interaction beyond controls: the `gestures` feature
 //!
@@ -64,6 +64,7 @@
 
 pub mod accessibility;
 pub mod board;
+pub(crate) mod color;
 pub mod compositor;
 pub mod dispatch;
 pub mod display;
@@ -141,7 +142,10 @@ pub(crate) fn test_fonts() -> FontSources {
     ])
 }
 
-#[cfg(all(test, not(feature = "system-fonts")))]
+/// The repository's fetched test faces, readable by every unit test — some
+/// need the bytes themselves (scene-backend font registration), not just a
+/// [`FontSources`], so the reader is not gated on `system-fonts`.
+#[cfg(test)]
 #[path = "../tests/support/fonts.rs"]
 mod test_font_files;
 

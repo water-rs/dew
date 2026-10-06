@@ -17,11 +17,12 @@ use kurbo::{Affine, Rect};
 use nami::Signal;
 use skrifa::prelude::{FontRef, GlyphId, LocationRef, MetadataProvider, Size};
 use waterui_core::Environment;
-use waterui_graphics::color::ResolvedColor;
+use waterui_graphics::color::WorkingColor;
 use waterui_text::FontCollection;
 use waterui_text::font::{Font, FontWeight, ResolvedFont};
 use waterui_text::styled::{Style, StyledStr};
 
+use crate::color::to_peniko;
 use crate::display_list::{DisplayList, DrawCommand};
 use crate::stats::FrameWork;
 use crate::theme;
@@ -550,7 +551,7 @@ fn push_span_style(
         range.clone(),
     );
     if let Some(color) = &style.foreground {
-        let resolved: ResolvedColor = color.resolve(env).snapshot();
+        let resolved: WorkingColor = color.resolve(env).snapshot();
         builder.push(
             parley::StyleProperty::Brush(resolved_color_to_rgba8(&resolved)),
             range,
@@ -579,19 +580,8 @@ fn font_family(family: Option<&str>) -> parley::FontFamily<'static> {
     )
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "color channels are clamped to [0, 1] before scaling to u8"
-)]
-fn resolved_color_to_rgba8(color: &ResolvedColor) -> [u8; 4] {
-    let srgb = color.to_srgb_with_headroom();
-    [
-        (srgb.red.clamp(0.0, 1.0) * 255.0).round() as u8,
-        (srgb.green.clamp(0.0, 1.0) * 255.0).round() as u8,
-        (srgb.blue.clamp(0.0, 1.0) * 255.0).round() as u8,
-        (color.opacity.clamp(0.0, 1.0) * 255.0).round() as u8,
-    ]
+fn resolved_color_to_rgba8(color: &WorkingColor) -> [u8; 4] {
+    peniko_to_rgba8(to_peniko(*color))
 }
 
 /// Converts a theme constant into parley's brush representation.

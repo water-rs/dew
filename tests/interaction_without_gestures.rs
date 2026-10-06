@@ -15,7 +15,7 @@ use waterui_core::event::{Event, OnEvent};
 use waterui_core::gesture::{GestureObserver, TapGesture};
 use waterui_core::{AnyView, Environment, Metadata, Native};
 use waterui_dew::DewRenderer;
-use waterui_graphics::color::ResolvedColor;
+use waterui_graphics::color::Color;
 
 fn render(view: AnyView) {
     let mut renderer = DewRenderer::default();
@@ -26,7 +26,7 @@ fn render(view: AnyView) {
 #[should_panic(expected = "waterui-dew/gestures")]
 fn hover_metadata_names_the_feature_it_needs() {
     render(AnyView::new(Metadata::new(
-        Native::new(ResolvedColor::default()),
+        Native::new(Color::default()),
         OnEvent::new(Event::HoverMove, |_: Environment| {}),
     )));
 }
@@ -35,7 +35,7 @@ fn hover_metadata_names_the_feature_it_needs() {
 #[should_panic(expected = "waterui-dew/gestures")]
 fn gesture_metadata_names_the_feature_it_needs() {
     render(AnyView::new(Metadata::new(
-        Native::new(ResolvedColor::default()),
+        Native::new(Color::default()),
         GestureObserver::new(TapGesture::new(), || {}),
     )));
 }

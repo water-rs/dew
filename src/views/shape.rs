@@ -19,7 +19,7 @@ use std::sync::Arc;
 use kurbo::{Affine, BezPath, Circle, Ellipse, PathEl, Point, Rect, RoundedRect, RoundedRectRadii};
 use nami::Computed;
 use waterui_core::layout::{ProposalSize, Size, StretchAxis, ViewDimensions};
-use waterui_graphics::color::ResolvedColor;
+use waterui_graphics::color::WorkingColor;
 use waterui_shape::{ClipShape, PathCommand, ResolvedShape, ShapeKind};
 
 use crate::dispatch::{DewNode, DewRenderer, RenderContext, WatchedSignal};
@@ -177,7 +177,7 @@ fn append_arc(
 struct ShapeNode {
     kind: ShapeKind,
     commands: Vec<PathCommand>,
-    fill: WatchedSignal<Computed<ResolvedColor>>,
+    fill: WatchedSignal<Computed<WorkingColor>>,
 }
 
 impl DewNode for ShapeNode {
@@ -193,13 +193,12 @@ impl DewNode for ShapeNode {
     fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
         let path = shape_path(self.kind, &self.commands, ctx.bounds);
         let color = self.fill.get();
-        let srgb = color.to_srgb_with_headroom();
         renderer
             .list_mut()
             .push(crate::display_list::DrawCommand::FillPath {
                 path,
                 transform: ctx.transform,
-                brush: peniko::Color::new([srgb.red, srgb.green, srgb.blue, color.opacity]).into(),
+                brush: crate::color::to_peniko(color).into(),
                 clip: None,
             });
     }

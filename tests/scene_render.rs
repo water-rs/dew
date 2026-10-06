@@ -1,17 +1,19 @@
 //! Scene content — `Canvas` drawings and SVG documents — rendered end to end
 //! on dew.
 //!
-//! These are the proof that `Scene2D` content is engine-portable: the same
-//! drawings that hydrolysis merges into a Vello scene reach dew's CPU
-//! rasterizer through the same contract, with no component code aware of
-//! either engine.
+//! These are the proof that scene content is engine-portable: the same
+//! recordings that hydrolysis resolves into its GPU surfaces reach dew's
+//! painter as `cherenkov_record` command lists, replayed band by band into
+//! `vello_cpu`, with no component code aware of either engine.
 //!
 //! Two properties matter beyond "it draws". A scene is opaque to the display
 //! list, so it must (1) stay one command whose bounds are exactly the box the
 //! view was given, and (2) be rebuilt only when its own content invalidates —
 //! a canvas that redrew itself every frame would dirty its whole rect every
 //! frame, which is precisely what dew's banded, dirty-region engine exists to
-//! avoid.
+//! avoid. A third property lives at the pixel level: a bound signal must
+//! repaint the scene through the recording's own update path — never through
+//! `build_scene`.
 //!
 //! Run with `--no-capture` to export the review PNGs under
 //! `/tmp/waterui_dew_scene2d/`.
@@ -28,7 +30,10 @@ use waterui_core::AnyView;
 use waterui_core::layout::{Point, Rect as LayoutRect, Size};
 use waterui_dew::{ClipRegion, DewRuntime, DisplayList, DrawCommand, HostBoard, render_view_png};
 use waterui_graphics::color::Srgb;
-use waterui_graphics::{Scene2D, SceneContent, SceneInvalidator, SceneView, invalidate_on_change};
+use waterui_graphics::draw::{Color as DrawColor, Draw, Recorder};
+use waterui_graphics::{
+    RecordingResources, SceneContent, SceneInvalidator, SceneView, invalidate_on_change,
+};
 use waterui_layout::scroll::ScrollView;
 use waterui_math::ast::MathStyle;
 use waterui_math::view::Math;
@@ -71,6 +76,134 @@ fn only_scene(list: &DisplayList) -> (&DrawCommand, Rect) {
 
 fn export(name: &str, png: &[u8]) {
     std::fs::write(support::export_path("scene2d", name), png).expect("write the review PNG");
+}
+
+/// A canvas group drawn at 0.5 opacity composites through the recording's
+/// layer group — not per-shape alpha — and its strokes anti-alias their edges
+/// into the band.
+///
+/// The group's recorded `blend_space` is `Linear`, and cherenkov honours it:
+/// on hydrolysis white at 0.5 over black lands near 188. dew composites in the
+/// encoding `vello_cpu` works in — sRGB — and lands near 128. This test pins
+/// dew's sRGB compositing, the documented asymmetry, not the framework's
+/// linear-light contract.
+#[test]
+fn a_group_at_half_opacity_composites_in_dews_srgb_and_antialiases() {
+    let mut runtime = DewRuntime::new(
+        HostBoard::new(120, 120),
+        support::test_environment(),
+        16,
+        || {
+            AnyView::new(Canvas::new(|ctx| {
+                // A black canvas underneath makes the composited result exact:
+                // white at 0.5 over black is 127 or 128, independent of the
+                // theme background behind the scene.
+                ctx.set_fill_style(Srgb::new_u8(0, 0, 0));
+                ctx.fill_rect(box_of(ctx.width, ctx.height));
+
+                ctx.push_alpha_rect(0.5, box_of(ctx.width, ctx.height));
+                ctx.set_fill_style(Srgb::new_u8(255, 255, 255));
+                ctx.fill_rect(LayoutRect::new(
+                    Point::new(20.0, 20.0),
+                    Size::new(40.0, 40.0),
+                ));
+                ctx.fill_circle(Point::new(90.0, 60.0), 20.0);
+                ctx.pop_layer();
+            }))
+        },
+    );
+    runtime.pump().expect("the first frame renders");
+    let display = runtime.board().framebuffer();
+
+    // White at 0.5 over black composites to ~128 in dew's sRGB space (in a
+    // linear space it would be ~188 — the documented asymmetry); allow a
+    // unit of rasterization tolerance.
+    let inside = display.pixel(30, 30);
+    assert!(
+        (120..=135).contains(&inside[0])
+            && inside[0] == inside[1]
+            && inside[1] == inside[2]
+            && inside[3] == 255,
+        "a 0.5 group over black must composite mid-grey, got {inside:?}"
+    );
+    let center = display.pixel(90, 60);
+    assert_eq!(
+        center, inside,
+        "the circle's interior carries the same group-alpha grey"
+    );
+    // The circle's edge anti-aliases: tracing a column through its top edge
+    // must find a coverage-mixed pixel strictly between black and the grey.
+    let edge: Vec<u8> = (35..50).map(|y| display.pixel(90, y)[0]).collect();
+    assert!(
+        edge.iter().any(|p| *p > 10 && *p < inside[0] - 4),
+        "the circle's edge must show a partially covered pixel, got {edge:?}"
+    );
+    // Outside the circle the canvas stays black.
+    assert_eq!(display.pixel(60, 100), [0, 0, 0, 255]);
+}
+
+/// A canvas fill bound to a signal repaints through the recording's live
+/// operand update — no `build_scene` pass, only the scene's own box dirty.
+///
+/// The canvas sits in a padded frame over a sibling fill, so the dirty rect
+/// can only be the scene's box: a full repaint or a rebuild would dirty the
+/// whole surface and would re-run the closure.
+#[test]
+fn a_bound_canvas_fill_repaints_without_rebuilding() {
+    let color = binding(Color::srgb(255, 0, 0));
+    let builds = Rc::new(Cell::new(0usize));
+    let mut runtime = DewRuntime::new(HostBoard::new(80, 60), support::test_environment(), 16, {
+        let color = color.clone();
+        let builds = Rc::clone(&builds);
+        move || {
+            AnyView::new(
+                Color::srgb(0, 32, 0).overlay(
+                    Canvas::new({
+                        let color = color.clone();
+                        let builds = Rc::clone(&builds);
+                        move |ctx| {
+                            builds.set(builds.get() + 1);
+                            ctx.set_fill_style(waterui::color::signal_color(color.clone()));
+                            ctx.fill_rect(box_of(ctx.width, ctx.height));
+                        }
+                    })
+                    .padding_with(10.0f32),
+                ),
+            )
+        }
+    });
+    runtime.pump().expect("the first frame renders");
+    assert_eq!(builds.get(), 1, "the scene builds its drawing once");
+    assert_eq!(
+        runtime.board().framebuffer().pixel(40, 30),
+        [255, 0, 0, 255],
+        "the bound color paints on the first frame"
+    );
+
+    color.set(Color::srgb(0, 0, 255));
+    let frame = runtime
+        .pump()
+        .expect("setting a bound color must schedule a repaint");
+    assert_eq!(
+        builds.get(),
+        1,
+        "a live operand update must not re-run the content's build_scene"
+    );
+    assert_eq!(
+        frame.dirty,
+        vec![Rect::new(10.0, 10.0, 70.0, 50.0)],
+        "the repaint dirties exactly the scene's padded box, not the surface"
+    );
+    assert_eq!(
+        runtime.board().framebuffer().pixel(40, 30),
+        [0, 0, 255, 255],
+        "the repaint shows the signal's new value"
+    );
+    let margin = runtime.board().framebuffer().pixel(4, 4);
+    assert!(
+        margin[1] > margin[0] + 10 && margin[1] > margin[2] + 10 && margin[3] == 255,
+        "the padding margin keeps the sibling's green, got {margin:?}"
+    );
 }
 
 /// A box covering the canvas' own coordinate space.
@@ -250,19 +383,32 @@ struct CountingContent {
 }
 
 impl SceneContent for CountingContent {
-    fn build_scene(&mut self, scene: &mut dyn Scene2D, width: f32, height: f32) -> bool {
+    fn build_scene(
+        &mut self,
+        recorder: &mut Recorder,
+        _resources: &mut RecordingResources<'_>,
+        width: f32,
+        height: f32,
+    ) -> bool {
         self.builds.set(self.builds.get() + 1);
-        let level = self.fill.snapshot();
-        let path = Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).to_path(0.1);
-        scene.fill(
-            peniko::Fill::NonZero,
-            Affine::IDENTITY,
-            &peniko::Color::from_rgba8(level, level, level, 255).into(),
-            None,
-            &path,
+        // Animating content varies its fill with the build count, so every
+        // re-record produces a genuinely different picture — every re-record
+        // also bumps the `Scene` generation, so even identical pixels would
+        // repaint; varying the fill is what keeps the test honest about
+        // content rather than bookkeeping.
+        let level = if self.animated {
+            f32::from(u8::try_from(self.builds.get() % 4).expect("a mod-4 index fits")) / 3.0
+        } else {
+            f32::from(self.fill.snapshot()) / 255.0
+        };
+        recorder.fill(
+            Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).to_path(0.1),
+            DrawColor::<waterui_graphics::draw::Srgb>::new([level, level, level, 1.0]),
         );
         self.animated
     }
+
+    fn rebuild_for_engine(&mut self) {}
 
     fn set_invalidator(&mut self, invalidator: Option<SceneInvalidator>) {
         self.guard = invalidator.map(|invalidator| invalidate_on_change(&invalidator, &self.fill));
@@ -377,12 +523,21 @@ fn animated_content_keeps_asking_for_frames() {
 struct NaturallySizedContent;
 
 impl SceneContent for NaturallySizedContent {
-    fn build_scene(&mut self, scene: &mut dyn Scene2D, width: f32, height: f32) -> bool {
-        let path = Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).to_path(0.1);
-        let brush: peniko::Brush = peniko::Color::new([0.0, 0.4, 1.0, 1.0]).into();
-        scene.fill(peniko::Fill::NonZero, Affine::IDENTITY, &brush, None, &path);
+    fn build_scene(
+        &mut self,
+        recorder: &mut Recorder,
+        _resources: &mut RecordingResources<'_>,
+        width: f32,
+        height: f32,
+    ) -> bool {
+        recorder.fill(
+            Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).to_path(0.1),
+            DrawColor::<waterui_graphics::draw::Srgb>::new([0.0, 0.4, 1.0, 1.0]),
+        );
         false
     }
+
+    fn rebuild_for_engine(&mut self) {}
 
     fn intrinsic_size(&self) -> Option<Size> {
         Some(Size::new(100.0, 200.0))

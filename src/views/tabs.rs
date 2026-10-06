@@ -34,7 +34,7 @@ use waterui_core::layout::{
     Point, ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubviewPlacement, ViewDimensions,
 };
 use waterui_core::{AnyView, Environment};
-use waterui_graphics::color::{AccentColor, ForegroundColor, MutedForegroundColor, ResolvedColor};
+use waterui_graphics::color::{AccentColor, ForegroundColor, MutedForegroundColor, WorkingColor};
 use waterui_navigation::tab::{NativeTabStyle, TabIcon};
 use waterui_navigation::{NavigationView, Tab, TabsLayout};
 use waterui_text::Text;
@@ -216,7 +216,7 @@ fn tinted_environment(selection: &Binding<Id>, id: Id, env: &Environment) -> Env
         .zip(selection)
         .map(move |((accent, muted), selected)| if selected == id { accent } else { muted });
     let mut item_env = env.clone();
-    item_env.insert(Store::<ForegroundColor, Computed<ResolvedColor>>::new(
+    item_env.insert(Store::<ForegroundColor, Computed<WorkingColor>>::new(
         tint.computed(),
     ));
     item_env

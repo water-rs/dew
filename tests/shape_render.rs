@@ -17,13 +17,9 @@ use waterui_dew::{Clip, ClipRegion, DisplayList, DrawCommand, render_view_png};
 
 mod support;
 
-const PATH_TOLERANCE: f64 = 0.05;
+use support::display_srgb;
 
-fn display_srgb(red: u8, green: u8, blue: u8) -> peniko::Color {
-    let resolved = ResolvedColor::from_srgb(Srgb::new_u8(red, green, blue));
-    let srgb = resolved.to_srgb_with_headroom();
-    peniko::Color::new([srgb.red, srgb.green, srgb.blue, resolved.opacity])
-}
+const PATH_TOLERANCE: f64 = 0.05;
 
 fn render_scene<V: View>(build: impl Fn() -> V + 'static, width: u32, height: u32) -> DisplayList {
     let mut renderer = support::test_renderer();

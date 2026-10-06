@@ -9,7 +9,7 @@ use waterui_backend_core::frame_signals::FrameSignals;
 use waterui_core::{Environment, env::Store};
 use waterui_graphics::color::{
     AccentColor, AccentForegroundColor, BackgroundColor, BorderColor, ForegroundColor,
-    MutedForegroundColor, ResolvedColor, Srgb, SurfaceColor, SurfaceVariantColor,
+    MutedForegroundColor, Srgb, SurfaceColor, SurfaceVariantColor, WorkingColor,
 };
 use waterui_text::font::{
     Body, Caption, Font, FontSlot, Footnote, Headline, ResolvedFont, Subheadline, Title,
@@ -85,14 +85,14 @@ fn install_default<T: FontSlot + 'static>(env: &mut Environment) {
 /// Theme signals retained for the renderer lifetime. Every slot requests a
 /// frame when it changes, so controls repaint without rebuilding the tree.
 pub(crate) struct ThemePalette {
-    background: WatchedSignal<Computed<ResolvedColor>>,
-    foreground: WatchedSignal<Computed<ResolvedColor>>,
-    muted_foreground: WatchedSignal<Computed<ResolvedColor>>,
-    surface: WatchedSignal<Computed<ResolvedColor>>,
-    border: WatchedSignal<Computed<ResolvedColor>>,
-    accent: WatchedSignal<Computed<ResolvedColor>>,
-    accent_foreground: WatchedSignal<Computed<ResolvedColor>>,
-    track: WatchedSignal<Computed<ResolvedColor>>,
+    background: WatchedSignal<Computed<WorkingColor>>,
+    foreground: WatchedSignal<Computed<WorkingColor>>,
+    muted_foreground: WatchedSignal<Computed<WorkingColor>>,
+    surface: WatchedSignal<Computed<WorkingColor>>,
+    border: WatchedSignal<Computed<WorkingColor>>,
+    accent: WatchedSignal<Computed<WorkingColor>>,
+    accent_foreground: WatchedSignal<Computed<WorkingColor>>,
+    track: WatchedSignal<Computed<WorkingColor>>,
 }
 
 impl ThemePalette {
@@ -114,28 +114,28 @@ impl ThemePalette {
     }
 
     pub(crate) fn background(&self) -> Color {
-        color(self.background.get())
+        crate::color::to_peniko(self.background.get())
     }
     pub(crate) fn foreground(&self) -> Color {
-        color(self.foreground.get())
+        crate::color::to_peniko(self.foreground.get())
     }
     pub(crate) fn muted_foreground(&self) -> Color {
-        color(self.muted_foreground.get())
+        crate::color::to_peniko(self.muted_foreground.get())
     }
     pub(crate) fn surface(&self) -> Color {
-        color(self.surface.get())
+        crate::color::to_peniko(self.surface.get())
     }
     pub(crate) fn border(&self) -> Color {
-        color(self.border.get())
+        crate::color::to_peniko(self.border.get())
     }
     pub(crate) fn accent(&self) -> Color {
-        color(self.accent.get())
+        crate::color::to_peniko(self.accent.get())
     }
     pub(crate) fn accent_foreground(&self) -> Color {
-        color(self.accent_foreground.get())
+        crate::color::to_peniko(self.accent_foreground.get())
     }
     pub(crate) fn track(&self) -> Color {
-        color(self.track.get())
+        crate::color::to_peniko(self.track.get())
     }
     pub(crate) fn thumb(&self) -> Color {
         self.accent_foreground()
@@ -148,8 +148,8 @@ impl ThemePalette {
 /// keys, so reading them here is equivalent to asking the `waterui` facade —
 /// and it keeps the facade, with the visual component stack behind it, out of
 /// the lean firmware graph (`default-features = false`).
-fn installed<T: 'static>(env: &Environment) -> Option<Computed<ResolvedColor>> {
-    env.query::<T, Computed<ResolvedColor>>().cloned()
+fn installed<T: 'static>(env: &Environment) -> Option<Computed<WorkingColor>> {
+    env.query::<T, Computed<WorkingColor>>().cloned()
 }
 
 /// The signal for colour slot `T`, falling back to dew's built-in default.
@@ -158,15 +158,15 @@ fn installed<T: 'static>(env: &Environment) -> Option<Computed<ResolvedColor>> {
 /// than a sampled value: a tab bar tints its selected item by installing one
 /// of these into the item's environment, so the tint follows the theme without
 /// anything rebuilding.
-pub(crate) fn slot<T: 'static>(env: &Environment, default: Color) -> Computed<ResolvedColor> {
-    installed::<T>(env).unwrap_or_else(|| Computed::constant(resolved(default)))
+pub(crate) fn slot<T: 'static>(env: &Environment, default: Color) -> Computed<WorkingColor> {
+    installed::<T>(env).unwrap_or_else(|| Computed::constant(working_of(default)))
 }
 
 fn watch<T: 'static>(
     env: &Environment,
     signals: FrameSignals,
     default: Color,
-) -> WatchedSignal<Computed<ResolvedColor>> {
+) -> WatchedSignal<Computed<WorkingColor>> {
     WatchedSignal::new(slot::<T>(env, default), signals)
 }
 
@@ -273,17 +273,12 @@ impl core::fmt::Debug for WatchedFonts {
 }
 
 pub(crate) fn foreground(env: &Environment) -> Color {
-    installed::<ForegroundColor>(env).map_or(FOREGROUND, |signal| color(signal.snapshot()))
+    installed::<ForegroundColor>(env).map_or(FOREGROUND, |signal| {
+        crate::color::to_peniko(signal.snapshot())
+    })
 }
 
-fn resolved(color: Color) -> ResolvedColor {
+fn working_of(color: Color) -> WorkingColor {
     let [red, green, blue, alpha] = color.components;
-    let mut resolved = ResolvedColor::from_srgb(Srgb::new(red, green, blue));
-    resolved.opacity = alpha;
-    resolved
-}
-
-fn color(resolved: ResolvedColor) -> Color {
-    let srgb = resolved.to_srgb_with_headroom();
-    Color::new([srgb.red, srgb.green, srgb.blue, resolved.opacity])
+    Srgb::new(red, green, blue).resolve().with_alpha(alpha)
 }
