@@ -57,6 +57,12 @@ jobs:
         shell: pwsh
         run: dxc --version
       - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v6
+      # The tests read Roboto from `test-fonts/`; the faces are fetched from a
+      # pinned, hash-verified release rather than committed.
+      - name: Install test fonts
+        shell: bash
+        run: uv run test-fonts/install.py
       - uses: taiki-e/install-action@nextest
       - if: runner.os == 'Linux'
         run: cargo fmt --all -- --check

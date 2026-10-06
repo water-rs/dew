@@ -122,8 +122,8 @@ pub(crate) const fn test_fonts() -> FontSources {
 }
 
 /// The faces this crate's unit tests shape with: the repository's own test
-/// binaries, registered the way a firmware board registers flash-resident
-/// fonts.
+/// faces (fetched by `test-fonts/install.py`), registered the way a firmware
+/// board registers flash-resident fonts.
 ///
 /// This build has no `system-fonts` feature and therefore no
 /// `FontSources::System` — the same asymmetry [`Board::fonts`] is declared
@@ -135,11 +135,15 @@ pub(crate) const fn test_fonts() -> FontSources {
 /// [`Board::fonts`]: board::Board::fonts
 #[cfg(all(test, not(feature = "system-fonts")))]
 pub(crate) fn test_fonts() -> FontSources {
-    FontSources::bundled(&[
-        include_bytes!("../test-fonts/Roboto-Regular.ttf"),
-        include_bytes!("../test-fonts/Roboto-Bold.ttf"),
+    FontSources::Bundled(vec![
+        peniko::Blob::from(test_font_files::read_test_font("Roboto-Regular.ttf")),
+        peniko::Blob::from(test_font_files::read_test_font("Roboto-Bold.ttf")),
     ])
 }
+
+#[cfg(all(test, not(feature = "system-fonts")))]
+#[path = "../tests/support/fonts.rs"]
+mod test_font_files;
 
 /// Rasterizes the dirty parts of `list` band-by-band and flushes them to
 /// `display`, then presents the frame, accumulating the work performed into
