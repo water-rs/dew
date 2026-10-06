@@ -289,7 +289,7 @@ mod tests {
     use waterui_controls::toggle::Toggle;
     use waterui_core::AnyView;
     use waterui_core::plugin::Plugin;
-    use waterui_graphics::color::{ResolvedColor, Srgb};
+    use waterui_graphics::color::{Srgb, WorkingColor};
 
     /// A renderer wired to the repository's own faces — see
     /// [`crate::test_fonts`]. These cases hide every control label, so no
@@ -414,8 +414,7 @@ mod tests {
 
     #[test]
     fn controls_read_installed_theme_colors() {
-        let accent: nami::Binding<ResolvedColor> =
-            binding(ResolvedColor::from_srgb(Srgb::new(1.0, 0.0, 0.0)));
+        let accent: nami::Binding<WorkingColor> = binding(Srgb::new(1.0, 0.0, 0.0).resolve());
         let mut env = Environment::new();
         waterui::theme::Theme::new()
             .colors(waterui::theme::ColorSettings::new().accent(accent.clone()))
@@ -433,7 +432,7 @@ mod tests {
             peniko::Color::from_rgb8(255, 0, 0),
         );
 
-        accent.set(ResolvedColor::from_srgb(Srgb::new(0.0, 0.0, 1.0)));
+        accent.set(Srgb::new(0.0, 0.0, 1.0).resolve());
         let commands = renderer.refresh_tree(200.0, 40.0);
         assert_color_near(
             solid_brush(&commands.commands()[1]),

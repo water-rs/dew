@@ -35,11 +35,11 @@ use waterui_core::layout::{
     Layout, LayoutPriority, ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubView,
     SubviewPlacement, ViewDimensions, measure_layout,
 };
-use waterui_core::views::{AnyViews, Views};
+use waterui_core::views::{AnyViews, AnyViewsSnapshot, ViewSnapshot, Views};
 use waterui_core::{
     AnyView, Environment, IgnorableMetadata, MainThreadBound, Metadata, Native, Retain, Str, View,
 };
-use waterui_graphics::color::{Color, ResolvedColor};
+use waterui_graphics::color::{Color, WorkingColor};
 use waterui_graphics::{SceneView, SceneViewMergeToParent};
 use waterui_layout::Divider;
 use waterui_layout::container::{FixedContainer, LazyContainer};
@@ -322,6 +322,15 @@ pub struct DewRenderer {
     accessibility_enabled: bool,
     root: Option<Box<dyn DewNode>>,
     theme: Option<theme::ThemePalette>,
+    /// The shared recording pipeline the scene nodes record through — dew's
+    /// `SceneBackend` resource table plus the recorder machinery; `None`
+    /// until a `SceneView` first renders.
+    scene_pipeline: Option<crate::views::scene::ScenePipeline>,
+    /// Monotonic frame counter, bumped at the head of every `refresh_tree` —
+    /// scene nodes stamp it on their emitted commands so a `LiveOwner`
+    /// change arriving for a frame the scene was not in can be told apart
+    /// from one it was.
+    frame_number: Rc<Cell<u64>>,
 }
 
 impl core::fmt::Debug for DewRenderer {
@@ -362,6 +371,8 @@ impl DewRenderer {
             accessibility_enabled: true,
             root: None,
             theme: None,
+            scene_pipeline: None,
+            frame_number: Rc::new(Cell::new(0)),
         }
     }
 
@@ -377,6 +388,16 @@ impl DewRenderer {
     #[must_use]
     pub fn fonts(&self) -> waterui_text::FontCollection {
         self.state.borrow().fonts()
+    }
+
+    /// The shared scene recording pipeline, started on first use: dew's
+    /// scene resource target and the `SceneResources` registration table
+    /// over it, so every scene on this renderer registers into — and the
+    /// painter resolves ids out of — the same store. A UI that never mounts
+    /// a `SceneView` never pays for the table.
+    pub(crate) fn scene_pipeline(&mut self) -> &mut crate::views::scene::ScenePipeline {
+        self.scene_pipeline
+            .get_or_insert_with(crate::views::scene::ScenePipeline::new)
     }
 
     pub(crate) const fn set_accessibility_enabled(&mut self, enabled: bool) {
@@ -404,10 +425,12 @@ impl DewRenderer {
         width: f64,
         height: f64,
     ) -> DisplayList {
-        // Dew draws scene content itself, through its own `Scene2D` over the
-        // rasterizer, so a `SceneView` must reach the dispatcher as a native
-        // leaf instead of resolving to the GPU surface it would otherwise fall
-        // back on — dew's graph has no GPU in it at all.
+        // Dew draws scene content itself: the content records into the
+        // `cherenkov_record` vocabulary and dew's painter replays it band by
+        // band (see [`crate::views::scene`]), so a `SceneView` must reach the
+        // dispatcher as a native leaf instead of resolving to the GPU
+        // surface it would otherwise fall back on — dew's graph has no GPU
+        // in it at all.
         let mut env = env.extending(SceneViewMergeToParent);
         theme::install_default_fonts(&mut env);
         self.theme = Some(theme::ThemePalette::new(&env, self.signals()));
@@ -421,8 +444,14 @@ impl DewRenderer {
             .expect("Dew theme palette requires an initialized retained root")
     }
 
+    /// The frame counter scene nodes stamp on their emitted commands.
+    pub(crate) fn frame_number(&self) -> Rc<Cell<u64>> {
+        Rc::clone(&self.frame_number)
+    }
+
     /// Re-layouts and re-renders the retained root without evaluating bodies.
     pub(crate) fn refresh_tree(&mut self, width: f64, height: f64) -> DisplayList {
+        self.frame_number.set(self.frame_number.get() + 1);
         let mut root = self
             .root
             .take()
@@ -816,12 +845,6 @@ fn build_unmeasured_node(
             .expect("dew SceneView downcast must match its type id");
         return views::scene::build(renderer, scene.into_inner());
     }
-    if type_id == TypeId::of::<Native<ResolvedColor>>() {
-        let color = *view
-            .downcast::<Native<ResolvedColor>>()
-            .expect("dew ResolvedColor downcast must match its type id");
-        return Box::new(ResolvedColorNode(color.into_inner()));
-    }
     if type_id == TypeId::of::<Native<TextConfig>>() {
         let text = *view
             .downcast::<Native<TextConfig>>()
@@ -1081,18 +1104,37 @@ impl DewNode for ContainerNode {
 /// sizing change because the children are what the layout measures.
 struct LazyContainerNode {
     container: ContainerNode,
-    contents: AnyViews<AnyView>,
+    /// Retained to keep the collection's watcher registry — and therefore
+    /// `_watch` — alive. Element access goes through `pending` snapshots.
+    _contents: AnyViews<AnyView>,
     env: Environment,
     depth: usize,
     /// The ids materialized, positionally parallel to `container.children`.
     ids: Vec<LazyChildId>,
-    /// The newest id list the collection watcher reported, drained by `patch`.
-    pending: Rc<RefCell<Option<Vec<LazyChildId>>>>,
+    /// The newest snapshot the collection watcher reported, drained by
+    /// `patch`. The snapshot — not an id list — is retained because it
+    /// materializes views coherently with the change it arrived with, even
+    /// if the source moved again before `patch` drains it.
+    pending: Rc<RefCell<Option<AnyViewsSnapshot<AnyView>>>>,
     _watch: BoxWatcherGuard,
 }
 
 /// The collection id `AnyViews` reports per position.
 type LazyChildId = <AnyViews<AnyView> as Views>::Id;
+
+/// The ids of `snapshot`'s whole range, in order — Views guarantees every
+/// item reports one, so a missing id is a broken collection, not an
+/// absent child.
+fn child_ids(snapshot: &AnyViewsSnapshot<AnyView>) -> Vec<LazyChildId> {
+    snapshot
+        .range()
+        .map(|index| {
+            snapshot
+                .get_id(index)
+                .unwrap_or_else(|| panic!("dew LazyContainer reported no id at index {index}"))
+        })
+        .collect()
+}
 
 impl LazyContainerNode {
     fn build(
@@ -1108,29 +1150,24 @@ impl LazyContainerNode {
         // bookkeeping and allocation than the rows it avoids building, and this
         // backend is budgeted on exactly that. Rendering nothing, which is what
         // an unhandled `LazyContainer` did before, is not the cheaper option.
-        let count = contents.len().snapshot();
-        let children = (0..count)
-            .map(|index| build_node(renderer, materialize(&contents, index), env, depth + 1))
+        let snapshot = contents.snapshot();
+        let range = snapshot.range();
+        let children = range
+            .map(|index| build_node(renderer, materialize(&snapshot, index), env, depth + 1))
             .collect();
-        let ids = (0..count)
-            .map(|index| {
-                contents
-                    .get_id(index)
-                    .unwrap_or_else(|| panic!("dew LazyContainer reported no id at index {index}"))
-            })
-            .collect();
+        let ids = child_ids(&snapshot);
         let pending = Rc::new(RefCell::new(None));
         let watch = contents.watch(.., {
             let pending = Rc::clone(&pending);
             let signals = renderer.signals();
             move |context, _change| {
-                *pending.borrow_mut() = Some(context.into_value().to_vec());
+                *pending.borrow_mut() = Some(context.into_value());
                 signals.request_refresh();
             }
         });
         Self {
             container: ContainerNode::new(layout, children, renderer.signals()),
-            contents,
+            _contents: contents,
             env: env.clone(),
             depth,
             ids,
@@ -1142,12 +1179,14 @@ impl LazyContainerNode {
     /// Rebuilds only the positions whose identity moved, returning whether
     /// the membership changed at all.
     fn reconcile(&mut self, renderer: &mut DewRenderer) -> bool {
-        let Some(ids) = self.pending.borrow_mut().take() else {
+        let Some(snapshot) = self.pending.borrow_mut().take() else {
             return false;
         };
+        let ids: Vec<LazyChildId> = child_ids(&snapshot);
         if ids == self.ids {
             return false;
         }
+        let range = snapshot.range();
         // Views guarantees a unique identifier for every item; the map
         // therefore retains exactly one semantic subtree per collection id.
         let mut retained: BTreeMap<LazyChildId, Box<dyn DewNode>> = core::mem::take(&mut self.ids)
@@ -1158,12 +1197,12 @@ impl LazyContainerNode {
         // subtree it already had, and only a genuinely new id builds a node.
         let children = ids
             .iter()
-            .enumerate()
-            .map(|(index, id)| {
+            .zip(range)
+            .map(|(id, index)| {
                 retained.remove(id).unwrap_or_else(|| {
                     build_node(
                         renderer,
-                        materialize(&self.contents, index),
+                        materialize(&snapshot, index),
                         &self.env,
                         self.depth,
                     )
@@ -1176,8 +1215,8 @@ impl LazyContainerNode {
     }
 }
 
-fn materialize(contents: &AnyViews<AnyView>, index: usize) -> AnyView {
-    contents
+fn materialize(snapshot: &AnyViewsSnapshot<AnyView>, index: usize) -> AnyView {
+    snapshot
         .get_view(index)
         .unwrap_or_else(|| panic!("dew LazyContainer failed to materialize child at index {index}"))
 }
@@ -1389,7 +1428,7 @@ impl DewNode for DynamicNode {
 }
 
 struct ColorNode {
-    color: WatchedSignal<Computed<ResolvedColor>>,
+    color: WatchedSignal<Computed<WorkingColor>>,
 }
 
 impl DewNode for ColorNode {
@@ -1409,32 +1448,10 @@ impl DewNode for ColorNode {
     }
 }
 
-struct ResolvedColorNode(ResolvedColor);
-
-impl DewNode for ResolvedColorNode {
-    fn measure(&self, _state: &RefCell<DewState>, proposal: ProposalSize) -> ViewDimensions {
-        ViewDimensions::new(Size::new(
-            proposal.width.unwrap_or(0.0),
-            proposal.height.unwrap_or(0.0),
-        ))
-    }
-
-    fn render(&mut self, renderer: &mut DewRenderer, ctx: RenderContext) {
-        render_color(renderer, ctx, self.0);
-    }
-
-    fn stretch_axis(&self) -> StretchAxis {
-        StretchAxis::Both
-    }
-}
-
-fn render_color(renderer: &mut DewRenderer, ctx: RenderContext, color: ResolvedColor) {
-    let srgb = color.to_srgb_with_headroom();
-    renderer.list.fill(
-        &ctx.bounds,
-        ctx.transform,
-        peniko::Color::new([srgb.red, srgb.green, srgb.blue, color.opacity]),
-    );
+fn render_color(renderer: &mut DewRenderer, ctx: RenderContext, color: WorkingColor) {
+    renderer
+        .list
+        .fill(&ctx.bounds, ctx.transform, crate::color::to_peniko(color));
 }
 
 struct TextNode {

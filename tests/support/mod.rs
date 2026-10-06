@@ -1,6 +1,6 @@
 use kurbo::Rect;
 use waterui::Plugin as _;
-use waterui::color::{ResolvedColor, Srgb};
+use waterui::color::{Srgb, working};
 use waterui::theme::{FontSettings, Theme};
 use waterui_backend_core::frame_signals::FrameSignals;
 use waterui_backend_core::time::Instant;
@@ -110,9 +110,9 @@ pub fn solid_fill_bounds(list: &DisplayList, color: peniko::Color) -> Vec<Rect> 
 /// The colour a `Color::srgb(...)` reaches the display list as.
 #[allow(dead_code, reason = "each integration test binary uses its own subset")]
 pub fn display_srgb(red: u8, green: u8, blue: u8) -> peniko::Color {
-    let resolved = ResolvedColor::from_srgb(Srgb::new_u8(red, green, blue));
-    let srgb = resolved.to_srgb_with_headroom();
-    peniko::Color::new([srgb.red, srgb.green, srgb.blue, resolved.opacity])
+    let resolved = Srgb::new_u8(red, green, blue).resolve();
+    let srgb = working::to_srgb(resolved);
+    peniko::Color::new([srgb.red, srgb.green, srgb.blue, resolved.components[3]])
 }
 
 #[allow(dead_code, reason = "each integration test binary uses its own subset")]

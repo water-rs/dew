@@ -14,12 +14,17 @@
 //! pairwise-diffable shape of the list, so scroll viewports do not degrade
 //! dirty-region tracking.
 
+use core::cell::RefCell;
+use std::fmt;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use kurbo::{Affine, BezPath, Cap, Join, Rect, Shape, Stroke};
 use peniko::Brush;
+use waterui_graphics::draw::Content;
 
 use crate::stats::FrameWork;
+use crate::views::scene::SceneTarget;
 
 /// One clip in force, in window coordinates.
 #[derive(Debug, Clone)]
@@ -159,29 +164,95 @@ pub enum DrawCommand {
         /// The clip in force when the command was pushed.
         clip: Option<Clip>,
     },
-    /// Replays an engine-neutral scene recording (after `transform`).
+    /// Replays a recorded scene's commands (after `transform`).
     ///
     /// This is how self-drawn scene content — a `Canvas` drawing, an SVG
-    /// document — reaches the screen. The recording is built by the content
-    /// itself through [`waterui_graphics::Scene2D`], in coordinates local to
-    /// the view, and dew replays it into its rasterizer band by band exactly
-    /// as it replays every other command.
+    /// document — reaches the screen. The content records its drawing into a
+    /// `cherenkov_record` [`Content`], and the painter replays the recorded
+    /// commands band by band into `vello_cpu`, exactly as it fills every
+    /// other command — no offscreen surface, no readback, no bitmap.
     ///
-    /// The recording is shared rather than owned for the same reason a glyph
-    /// run's glyphs are: a scene that did not change is re-emitted every frame
-    /// and must compare equal by pointer, so an unchanged canvas dirties
-    /// nothing. Content rebuilds its recording only when it invalidates or is
-    /// resized, which is what gives it a fresh pointer.
+    /// The command shares the live `Content` rather than copying its list:
+    /// signal and animation updates mutate that one list in place, and the
+    /// generation the command carries is what tells an unchanged scene from
+    /// one that moved under it — an unchanged canvas dirties nothing.
     Scene {
-        /// The commands to replay, in view-local coordinates.
-        recording: Arc<waterui_graphics::SceneRecording>,
-        /// Local-to-window transform applied to every replayed command.
+        /// The recorded drawing and the table its resource ids name.
+        scene: Scene,
+        /// Local-to-window transform applied to the recording.
         transform: Affine,
-        /// The view-local box the content was built for.
+        /// The view-local box the content was recorded for.
         bounds: Rect,
         /// The clip in force when the command was pushed.
         clip: Option<Clip>,
     },
+}
+
+/// The recorded drawing a `Scene` command replays: the live
+/// `cherenkov_record` [`Content`], its emission generation, whether its
+/// list isolates, and its resource table.
+///
+/// One `Content` is the single owner of the recorded list: every `Scene`
+/// command for it shares the same `Rc` and reads [`Content::view`], so a
+/// live update mutates the one list in place instead of deep-copying it per
+/// command. The target travels with the content because the ids are
+/// meaningless without it — two recordings made against different
+/// registration generations name the same raw ids with different meanings.
+#[derive(Clone)]
+pub struct Scene {
+    /// The live recording, in the scene's local coordinates, in the node's
+    /// one slot — `Some` while a recording is installed, `None` while the
+    /// node re-records or its box is empty. The painter borrows it
+    /// read-only: the node drains pending updates through `take_change`, so
+    /// `Content::view` at paint time is the committed list.
+    pub(crate) content: Rc<RefCell<Option<Content>>>,
+    /// The content's change counter at emit time: the node bumps it on every
+    /// `Replace`/`Update` it takes, so two commands over the same `Rc` and
+    /// generation replay identically.
+    pub(crate) generation: u64,
+    /// Whether the recorded list composites as an isolated layer — the
+    /// node's `blends_within` verdict for this generation, computed where a
+    /// mutable borrow is already held so the painter never needs one.
+    pub(crate) isolated: bool,
+    /// dew's registration table — the painter resolves ids through it.
+    pub(crate) target: Rc<SceneTarget>,
+}
+
+impl Scene {
+    /// A replayable scene over `content` at `generation`, `isolated` when
+    /// its list blends, resolving its resources through `target`.
+    pub(crate) const fn new(
+        content: Rc<RefCell<Option<Content>>>,
+        generation: u64,
+        isolated: bool,
+        target: Rc<SceneTarget>,
+    ) -> Self {
+        Self {
+            content,
+            generation,
+            isolated,
+            target,
+        }
+    }
+}
+
+impl fmt::Debug for Scene {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Scene")
+            .field("generation", &self.generation)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for Scene {
+    fn eq(&self, other: &Self) -> bool {
+        // The same live content at the same generation replays the same
+        // commands — the node bumps the generation exactly when a
+        // `Replace`/`Update` lands, so this compare needs no list walk.
+        Rc::ptr_eq(&self.content, &other.content)
+            && self.generation == other.generation
+            && Rc::ptr_eq(&self.target, &other.target)
+    }
 }
 
 impl DrawCommand {
@@ -337,22 +408,18 @@ impl PartialEq for DrawCommand {
             }
             (
                 Self::Scene {
-                    recording: r1,
+                    scene: s1,
                     transform: t1,
                     bounds: b1,
                     clip: c1,
                 },
                 Self::Scene {
-                    recording: r2,
+                    scene: s2,
                     transform: t2,
                     bounds: b2,
                     clip: c2,
                 },
-                // Scene recordings compare by identity alone. Their commands
-                // are opaque to dew — comparing them element by element would
-                // cost more than rasterizing the scene, and content that did
-                // not change hands back the very same recording.
-            ) => Arc::ptr_eq(r1, r2) && t1 == t2 && b1 == b2 && c1 == c2,
+            ) => s1 == s2 && t1 == t2 && b1 == b2 && c1 == c2,
             _ => false,
         }
     }

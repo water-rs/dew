@@ -111,6 +111,10 @@ impl<B: Board> DewRuntime<B> {
     pub fn pump(&mut self) -> Option<Frame> {
         let first = !self.rendered_once;
         let signals = self.renderer.signals();
+        // Scene animations sample the board clock, not `Instant::now()`: one
+        // pump is one cadence slot, so every sample this frame shares the
+        // instant the board reports.
+        signals.set_frame_clock(self.board.now());
         let mut input_changed = false;
         if !first {
             while let Some(request) = self.board.poll_accessibility_action() {

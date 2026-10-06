@@ -63,7 +63,7 @@ use waterui_core::layout::{
     Point, ProposalSize, Rect as LayoutRect, Size, StretchAxis, SubviewPlacement, ViewDimensions,
 };
 use waterui_core::{AnyView, Environment, Metadata};
-use waterui_graphics::color::ResolvedColor;
+use waterui_graphics::color::WorkingColor;
 use waterui_navigation::split::NavigationSplitDetailBuilder;
 use waterui_navigation::{
     Bar, ColumnWidth, CustomNavigationController, NativeNavigationSplitStyle, NavigationController,
@@ -144,7 +144,7 @@ impl Entry {
 /// The retained navigation bar of one destination.
 struct Chrome {
     hidden: WatchedSignal<Computed<bool>>,
-    color: Option<WatchedSignal<Computed<ResolvedColor>>>,
+    color: Option<WatchedSignal<Computed<WorkingColor>>>,
     display_mode: NavigationTitleDisplayMode,
     title: Box<dyn DewNode>,
     subtitle: Box<dyn DewNode>,
@@ -325,7 +325,7 @@ impl Chrome {
     fn render_background(&self, renderer: &mut DewRenderer, ctx: RenderContext, bar_rect: Rect) {
         let background = self.color.as_ref().map_or_else(
             || renderer.theme().surface(),
-            |color| to_peniko(color.get()),
+            |color| crate::color::to_peniko(color.get()),
         );
         renderer
             .list_mut()
@@ -542,11 +542,6 @@ impl Chrome {
 fn centered_in(row: Rect, x: f64, size: Size) -> LayoutRect {
     let y = row.y0 + (row.height() - f64::from(size.height)).max(0.0) / 2.0;
     LayoutRect::new(Point::new(to_f32(x), to_f32(y)), size)
-}
-
-fn to_peniko(color: ResolvedColor) -> peniko::Color {
-    let srgb = color.to_srgb_with_headroom();
-    peniko::Color::new([srgb.red, srgb.green, srgb.blue, color.opacity])
 }
 
 /// The buffer a controller writes into and [`StackNode::patch`] drains.
