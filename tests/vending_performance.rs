@@ -55,11 +55,11 @@ const INTERACTION_PERIOD: usize = 120;
 /// This used to probe the host for Arial or `DejaVu`, so the shaping work — and
 /// therefore the work budgets below — depended on which OS ran the test:
 /// numbers calibrated against one host's font tripped the gate on another's
-/// (issue #153). The repository's deterministic test font is compiled in
-/// instead, exactly the way firmware bundles its face: system enumeration
-/// stays off, and every platform shapes the same glyphs from the same tables.
+/// (issue #153). The repository's deterministic test font is bundled instead,
+/// the way firmware bundles its face: system enumeration stays off, and every
+/// platform shapes the same glyphs from the same tables.
 fn load_simulation_font() -> Vec<u8> {
-    include_bytes!("../test-fonts/Roboto-Regular.ttf").to_vec()
+    support::fonts::read_test_font("Roboto-Regular.ttf")
 }
 
 /// Steady-state heap retention tolerated, in bytes per sampled frame.

@@ -1,0 +1,4 @@
+# Fetched and verified by install.py — see README.md
+*.ttf
+# What an interrupted write leaves behind
+*.partial

@@ -11,6 +11,13 @@ use std::path::PathBuf;
 
 use waterui_testing::TestArtifacts;
 
+pub mod fonts;
+
+// Only the performance simulation uses this; other integration tests include
+// `support` for `test_environment` alone.
+#[allow(dead_code, reason = "each integration test binary uses its own subset")]
+pub mod simulation;
+
 #[allow(dead_code, reason = "each integration test binary uses its own subset")]
 pub fn test_environment() -> Environment {
     let _ = executor_core::try_init_global_executor(native_executor::NativeExecutor::new());
@@ -36,17 +43,12 @@ pub fn test_renderer() -> DewRenderer {
     #[cfg(feature = "system-fonts")]
     let fonts = FontSources::System;
     #[cfg(not(feature = "system-fonts"))]
-    let fonts = FontSources::bundled(&[
-        include_bytes!("../../test-fonts/Roboto-Regular.ttf"),
-        include_bytes!("../../test-fonts/Roboto-Bold.ttf"),
+    let fonts = FontSources::Bundled(vec![
+        peniko::Blob::from(fonts::read_test_font("Roboto-Regular.ttf")),
+        peniko::Blob::from(fonts::read_test_font("Roboto-Bold.ttf")),
     ]);
     DewRenderer::new(FrameSignals::new(Instant::now()), fonts)
 }
-
-// Only the performance simulation uses this; other integration tests include
-// `support` for `test_environment` alone.
-#[allow(dead_code, reason = "each integration test binary uses its own subset")]
-pub mod simulation;
 
 /// Where a test writes the PNG it exports for visual review.
 ///
